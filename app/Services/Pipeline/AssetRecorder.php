@@ -33,7 +33,7 @@ class AssetRecorder
     ): Asset {
         $disk = config('studio.disk', 'local');
         $extension = pathinfo($media->path, PATHINFO_EXTENSION) ?: 'bin';
-        $path = sprintf('studio/projects/%d/%s/%s.%s', $project->getKey(), $type->value, Str::uuid(), $extension);
+        $path = sprintf('%s/%s/%s.%s', $project->storageDirectory(), $type->value, Str::uuid(), $extension);
 
         $stream = fopen($media->path, 'rb');
         if ($stream === false) {

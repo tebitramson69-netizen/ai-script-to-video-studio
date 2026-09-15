@@ -46,7 +46,7 @@ class FakeSoundEffectGenerator implements SoundEffectGenerator
 
     public function costPerEffectUsd(): float
     {
-        return 0.0;
+        return (float) config('studio.fake_costs.sfx_per_effect_usd', 0.0);
     }
 
     public function providerName(): string

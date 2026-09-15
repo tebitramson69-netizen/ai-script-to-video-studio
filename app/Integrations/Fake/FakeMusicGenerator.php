@@ -66,7 +66,7 @@ class FakeMusicGenerator implements MusicGenerator
 
     public function costPerMinuteUsd(): float
     {
-        return 0.0;
+        return (float) config('studio.fake_costs.music_per_minute_usd', 0.0);
     }
 
     public function providerName(): string

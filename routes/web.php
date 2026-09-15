@@ -56,6 +56,11 @@ Route::middleware('auth')->group(function () {
         Route::post('/shots/render', [PipelineController::class, 'renderShots'])->name('pipeline.render');
         Route::post('/audio', [PipelineController::class, 'generateAudio'])->name('pipeline.audio');
         Route::post('/export', [PipelineController::class, 'export'])->name('pipeline.export');
+        Route::post('/audio/narration', [PipelineController::class, 'regenerateNarration'])->name('pipeline.narration.regenerate');
+        Route::post('/audio/music', [PipelineController::class, 'regenerateMusic'])->name('pipeline.music.regenerate');
+
+        // NFR-7 retention.
+        Route::post('/purge', [PipelineController::class, 'purgeIntermediates'])->name('pipeline.purge');
 
         // Owner review and editing.
         Route::patch('/scenes/{scene}', [SceneController::class, 'update'])->name('scenes.update');

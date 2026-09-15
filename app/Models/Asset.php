@@ -45,4 +45,27 @@ class Asset extends Model
     {
         return Storage::disk($this->disk)->exists($this->path);
     }
+
+    /**
+     * Remove the underlying file. Called when an asset is genuinely superseded
+     * (a regenerated narration track) or purged (NFR-7).
+     *
+     * The usage_record that recorded what this asset cost survives, because
+     * usage_records.asset_id is nullOnDelete — so reclaiming disk space never
+     * erases spend history.
+     */
+    public function deleteFile(): void
+    {
+        if ($this->path !== '' && $this->exists()) {
+            Storage::disk($this->disk)->delete($this->path);
+        }
+    }
+
+    protected static function booted(): void
+    {
+        // Covers single-model deletes. Whole-project deletion is handled on the
+        // Project model instead, because a database-level FK cascade does not
+        // fire Eloquent events and would otherwise orphan every file.
+        static::deleted(fn (self $asset) => $asset->deleteFile());
+    }
 }

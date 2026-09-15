@@ -81,7 +81,7 @@ class FakeImageGenerator implements ImageGenerator
 
     public function costPerImageUsd(): float
     {
-        return 0.0;
+        return (float) config('studio.fake_costs.image_usd', 0.0);
     }
 
     public function providerName(): string

@@ -10,6 +10,7 @@ use App\Models\Project;
 use App\Services\Cost\CostEstimator;
 use App\Services\Pipeline\PipelineRunner;
 use App\Services\Pipeline\ProjectStateMachine;
+use App\Services\Retention\RetentionManager;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -49,8 +50,12 @@ class ProjectController extends Controller
             ->with('status', 'Script submitted. Parsing it into scenes now.');
     }
 
-    public function show(Project $project, CostEstimator $costs, ProjectStateMachine $stateMachine): View
-    {
+    public function show(
+        Project $project,
+        CostEstimator $costs,
+        ProjectStateMachine $stateMachine,
+        RetentionManager $retention,
+    ): View {
         $this->authorize('view', $project);
 
         $project->load([
@@ -67,6 +72,12 @@ class ProjectController extends Controller
             'runtimeSeconds' => $costs->estimatedRuntimeSeconds($project),
             'exportBlockedReason' => $stateMachine->exportBlockedReason($project),
             'candidatesByCharacter' => $this->candidatesByCharacter($project),
+
+            // NFR-7: the owner cannot manage storage they cannot see.
+            'retention' => $retention,
+            'storageUsed' => $retention->humanBytes($project->storageBytes()),
+            'purgeable' => $retention->humanBytes($project->purgeableBytes()),
+            'purgeBlockedReason' => $retention->purgeBlockedReason($project),
         ]);
     }
 

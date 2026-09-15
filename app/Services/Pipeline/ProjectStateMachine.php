@@ -163,6 +163,12 @@ class ProjectStateMachine
             return "{$stale} shot(s) are stale because an upstream change invalidated them. Re-render them before exporting.";
         }
 
+        $purged = $project->shots()->where('status', ShotStatus::Purged)->count();
+        if ($purged > 0) {
+            return "{$purged} shot(s) had their clips purged to reclaim disk space. "
+                .'Re-render them to export again — the previously exported video is still available to download.';
+        }
+
         $unrendered = $project->unrenderedShotCount();
         if ($unrendered > 0) {
             return "{$unrendered} shot(s) have not rendered successfully yet.";

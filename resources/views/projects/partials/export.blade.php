@@ -21,6 +21,11 @@
             Narration:
             @if ($narration = $project->narrationAsset())
                 <a href="{{ route('assets.show', [$project, $narration]) }}">{{ number_format((float) $narration->duration_seconds, 2) }}s</a>
+                {{-- FR-15: regenerate narration without touching music. --}}
+                <form method="POST" action="{{ route('pipeline.narration.regenerate', $project) }}" class="inline">
+                    @csrf
+                    <button class="btn small" type="submit">Regenerate</button>
+                </form>
             @else
                 <span class="muted">not generated</span>
             @endif
@@ -30,6 +35,10 @@
             @if ($music = $project->musicAsset())
                 <a href="{{ route('assets.show', [$project, $music]) }}">{{ number_format((float) $music->duration_seconds, 2) }}s</a>
                 <span class="muted small">(ducked {{ config('studio.audio.music_duck_db') }} dB under narration)</span>
+                <form method="POST" action="{{ route('pipeline.music.regenerate', $project) }}" class="inline">
+                    @csrf
+                    <button class="btn small" type="submit">Regenerate</button>
+                </form>
             @else
                 <span class="muted">not generated</span>
             @endif
@@ -54,5 +63,31 @@
                 Download .mp4
             </a>
         </div>
+    @endif
+</section>
+
+{{-- NFR-7: retention. Video is measured in gigabytes, so the owner needs to see
+     what a project occupies and be able to reclaim it. --}}
+<section class="card">
+    <h2>Storage</h2>
+
+    <div class="cost-grid">
+        <div><span class="muted">This project uses</span><strong>{{ $storageUsed }}</strong></div>
+        <div><span class="muted">Reclaimable shot clips</span><strong>{{ $purgeable }}</strong></div>
+    </div>
+
+    @if ($purgeBlockedReason)
+        <p class="hint">{{ $purgeBlockedReason }}</p>
+    @else
+        <p class="hint">
+            Deletes the intermediate clips only. The exported <code>.mp4</code> and every locked
+            character reference are kept. Those shots must be re-rendered before this project
+            can be exported again.
+        </p>
+        <form method="POST" action="{{ route('pipeline.purge', $project) }}"
+              onsubmit="return confirm('Delete this project\'s intermediate shot clips? The exported video is kept.')">
+            @csrf
+            <button class="btn danger" type="submit">Purge intermediate clips ({{ $purgeable }})</button>
+        </form>
     @endif
 </section>

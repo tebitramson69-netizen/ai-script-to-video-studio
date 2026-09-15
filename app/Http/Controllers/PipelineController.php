@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Exceptions\BudgetExceededException;
 use App\Models\Project;
 use App\Services\Pipeline\PipelineRunner;
+use App\Services\Retention\RetentionManager;
 use Illuminate\Http\RedirectResponse;
 
 /**
@@ -76,6 +77,43 @@ class PipelineController extends Controller
         $this->runner->export($project);
 
         return back()->with('status', 'Assembling the final video.');
+    }
+
+    /** FR-15: regenerate narration on its own. */
+    public function regenerateNarration(Project $project): RedirectResponse
+    {
+        $this->authorize('generate', $project);
+
+        return $this->guarded(
+            fn () => $this->runner->regenerateNarration($project),
+            'Regenerating narration.',
+        );
+    }
+
+    /** FR-15: regenerate music on its own. */
+    public function regenerateMusic(Project $project): RedirectResponse
+    {
+        $this->authorize('generate', $project);
+
+        return $this->guarded(
+            fn () => $this->runner->regenerateMusic($project),
+            'Regenerating music.',
+        );
+    }
+
+    /** NFR-7: reclaim the disk used by intermediate shot clips. */
+    public function purgeIntermediates(Project $project, RetentionManager $retention): RedirectResponse
+    {
+        $this->authorize('generate', $project);
+
+        if (($reason = $retention->purgeBlockedReason($project)) !== null) {
+            return back()->with('budget_error', $reason);
+        }
+
+        $reclaimed = $retention->purge($project);
+
+        return back()->with('status', 'Reclaimed '.$retention->humanBytes($reclaimed)
+            .'. Those shots must be re-rendered before this project can be exported again.');
     }
 
     /**

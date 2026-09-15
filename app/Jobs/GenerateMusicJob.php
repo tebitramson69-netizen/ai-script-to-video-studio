@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Contracts\Data\MusicRequest;
 use App\Contracts\MusicGenerator;
 use App\Enums\AssetType;
+use App\Models\Asset;
 use App\Models\Project;
 use App\Services\Cost\CostEstimator;
 use App\Services\Pipeline\AssetRecorder;
@@ -16,7 +17,15 @@ use Throwable;
  */
 class GenerateMusicJob extends StudioJob
 {
-    public function __construct(public int $projectId) {}
+    /**
+     * @param  bool  $force  regenerate even if a usable track already exists
+     *                       (FR-15). Without it the stage is a no-op when the
+     *                       existing track still fits the timeline.
+     */
+    public function __construct(
+        public int $projectId,
+        public bool $force = false,
+    ) {}
 
     public function handle(
         MusicGenerator $music,
@@ -40,6 +49,14 @@ class GenerateMusicJob extends StudioJob
             return;
         }
 
+        $existing = $project->musicAsset();
+
+        // NFR-3: a track that already covers this timeline is not worth paying
+        // for twice. A second press of the audio button must cost nothing.
+        if (! $this->force && $existing !== null && $this->stillFits($existing, $duration)) {
+            return;
+        }
+
         $mood = $project->music_mood ?: $this->dominantMood($project);
 
         $costs->assertCanSpend(
@@ -52,7 +69,7 @@ class GenerateMusicJob extends StudioJob
 
         $media = $music->generate(new MusicRequest(mood: $mood, durationSeconds: $duration));
 
-        $recorder->record(
+        $track = $recorder->record(
             project: $project,
             type: AssetType::Music,
             media: $media,
@@ -60,6 +77,28 @@ class GenerateMusicJob extends StudioJob
             provider: $music->providerName(),
             durationMs: (int) ((microtime(true) - $startedAt) * 1000),
         );
+
+        // Only one music track is ever in play (Phase 1). Anything it replaced
+        // is dead weight on disk; its usage record survives the deletion.
+        $project->assets()
+            ->where('type', AssetType::Music)
+            ->whereKeyNot($track->getKey())
+            ->get()
+            ->each->delete();
+    }
+
+    /**
+     * The timeline moves when narration is re-measured or a scene is edited. A
+     * track more than a second off no longer covers the video, and one much
+     * longer than it was bought for is simply the wrong track.
+     */
+    protected function stillFits(Asset $music, float $requiredSeconds): bool
+    {
+        if (! $music->exists()) {
+            return false;
+        }
+
+        return abs((float) $music->duration_seconds - $requiredSeconds) <= 1.0;
     }
 
     /**

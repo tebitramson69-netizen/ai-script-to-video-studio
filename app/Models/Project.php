@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Storage;
 
 class Project extends Model
 {
@@ -115,5 +116,44 @@ class Project extends Model
     public function isAtLeast(ProjectStatus $status): bool
     {
         return $this->status->isAtLeast($status);
+    }
+
+    /**
+     * Where every asset for this project lives. Kept in one place because both
+     * the recorder (writing) and deletion/purge (reclaiming) need to agree on it.
+     */
+    public function storageDirectory(): string
+    {
+        return 'studio/projects/'.$this->getKey();
+    }
+
+    /**
+     * Total bytes this project occupies on disk (NFR-7: "show storage used").
+     */
+    public function storageBytes(): int
+    {
+        return (int) $this->assets()->sum('bytes');
+    }
+
+    /**
+     * Bytes that could be reclaimed by purging intermediate shot clips after a
+     * successful export. Final videos and locked references are never counted.
+     */
+    public function purgeableBytes(): int
+    {
+        return (int) $this->assets()
+            ->where('type', AssetType::ShotClip)
+            ->sum('bytes');
+    }
+
+    protected static function booted(): void
+    {
+        // The FK cascade deletes asset ROWS but never fires Eloquent events, so
+        // without this every clip, reference image and export would stay on disk
+        // forever after the project was deleted.
+        static::deleting(function (self $project) {
+            Storage::disk(config('studio.disk', 'local'))
+                ->deleteDirectory($project->storageDirectory());
+        });
     }
 }

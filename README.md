@@ -35,7 +35,7 @@ a rewrite.
 | FR-19 – FR-21 stitch, mix with ducking, export `.mp4` | Done |
 | FR-22 persistence and resume | Done |
 | NFR-1 – NFR-6 async, resilience, idempotency, cost, logging, portability | Done |
-| NFR-7 retention / purge intermediates | **Not built** — see Known gaps |
+| NFR-7 retention / purge intermediates | Done |
 | FR-7 multi-angle reference sheets | Phase 2 |
 | FR-13 per-scene SFX | Phase 2 (interface exists, not wired to the timeline) |
 | Lip-sync, multilingual (EN/FR/Pidgin), captions | Phase 3 |
@@ -99,7 +99,7 @@ a VPS, run `queue:work` under Supervisor or systemd.
 php artisan test
 ```
 
-52 tests. The end-to-end test renders real media through FFmpeg and takes about
+72 tests. The end-to-end test renders real media through FFmpeg and takes about
 35 seconds; it skips itself if FFmpeg is missing.
 
 ---
@@ -160,6 +160,26 @@ estimate automatically. `CostEstimator::assertWithinBudget()` runs *before* any
 job is queued; the cap is hard, and `AssetRecorder` makes it impossible to store
 an asset without also writing its usage record.
 
+### Retention (NFR-7)
+
+Video is measured in gigabytes, so a project's storage is visible on its page and
+reclaimable:
+
+```bash
+php artisan studio:purge-intermediates --dry-run      # report only
+php artisan studio:purge-intermediates                # every exported project
+php artisan studio:purge-intermediates 3 --days=30    # one project, aged
+```
+
+Only intermediate shot clips are deleted. The exported `.mp4` and every locked
+character reference are kept. Purged shots move to a visible `purged` state and
+block a re-export until re-rendered — deleting the clips but still reporting the
+shots as "rendered" would produce an export that fails deep inside FFmpeg instead
+of a clear message up front.
+
+Deleting an asset never erases spend: `usage_records.asset_id` is
+`nullOnDelete`, so cost history outlives the files.
+
 ### Security (§14)
 
 - API keys are server-side env vars; the browser never holds a credential
@@ -181,13 +201,11 @@ Stated plainly rather than left for you to discover:
 1. **No real provider adapters.** Blocked on PRD A1/A2. `docs/PROVIDERS.md` gives
    the exact shape to implement. I did not write speculative fal.ai/ElevenLabs
    HTTP clients, because an unverified request payload is worse than none.
-2. **NFR-7 retention is not implemented.** `AssetType::isPurgeable()` marks shot
-   clips as purgeable and the storage cost is real, but there is no purge command
-   or storage-used display yet.
-3. **Per-scene SFX (FR-13, Phase 2)** has an interface and a fake driver, but is
+2. **Per-scene SFX (FR-13, Phase 2)** has an interface and a fake driver, but is
    not placed on the assembly timeline.
-4. **No polling/websockets.** Queued stages update on page refresh.
-5. **The `"Ai"` Laravel project (PRD D1/A5) was never inspected** — it was not
+3. **No polling/websockets.** Queued stages update on page refresh. This starts
+   to matter once real renders take minutes rather than seconds.
+4. **The `"Ai"` Laravel project (PRD D1/A5) was never inspected** — it was not
    reachable from the environment this was built in. Nothing here assumes the
    shape of its `usage_records` table; this project defines its own. If you do
    want to merge the two, that reconciliation is still open.

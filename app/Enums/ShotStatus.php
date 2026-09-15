@@ -17,6 +17,15 @@ enum ShotStatus: string
      */
     case Stale = 'stale';
 
+    /**
+     * Rendered and exported, then its clip was deleted to reclaim disk (NFR-7).
+     *
+     * A distinct state rather than silently nulling the asset: the shot really
+     * cannot be re-assembled from, and the owner must be able to see that before
+     * they try to export again.
+     */
+    case Purged = 'purged';
+
     public function isTerminal(): bool
     {
         return in_array($this, [self::Rendered, self::Failed], true);
@@ -39,6 +48,25 @@ enum ShotStatus: string
             self::Rendered => 'Rendered',
             self::Failed => 'Failed',
             self::Stale => 'Stale — upstream changed',
+            self::Purged => 'Purged to reclaim space',
         };
+    }
+
+    /**
+     * States that a re-render should pick up.
+     *
+     * @return list<self>
+     */
+    public static function needingRender(): array
+    {
+        return [self::Pending, self::Failed, self::Stale, self::Purged];
+    }
+
+    /**
+     * @return list<string>
+     */
+    public static function needingRenderValues(): array
+    {
+        return array_map(fn (self $s) => $s->value, self::needingRender());
     }
 }

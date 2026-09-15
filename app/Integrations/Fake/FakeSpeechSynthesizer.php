@@ -67,7 +67,7 @@ class FakeSpeechSynthesizer implements SpeechSynthesizer
 
     public function costPer1kCharactersUsd(): float
     {
-        return 0.0;
+        return (float) config('studio.fake_costs.tts_per_1k_chars_usd', 0.0);
     }
 
     public function providerName(): string

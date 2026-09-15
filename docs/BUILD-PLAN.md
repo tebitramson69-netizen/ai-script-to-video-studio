@@ -77,15 +77,11 @@ PRD's $7.10 clean-run estimate (§13). Correct the price constants in
 
 *This is the real Phase 1 completion.* Everything before it is rehearsal.
 
-### Step 5 — NFR-7 retention
-The one Phase 1 requirement not yet built. Clips are large and storage grows fast
-once real renders start:
-- `studio:purge-intermediates {project}` deleting `AssetType::ShotClip` files
-  after a successful export, keeping the final mp4 and locked references
-- storage-used display per project
-
-Deliberately deferred until real files exist, because fake clips are small enough
-that the pressure isn't real yet.
+### Step 5 — ~~NFR-7 retention~~ (done)
+`studio:purge-intermediates` plus a storage panel on each project page. Worth
+re-checking once real clips exist: the numbers here are small because fake clips
+are small, and a single real 8-second 1080p clip is orders of magnitude larger.
+Consider running the command on a schedule with `--days=30`.
 
 ### Step 6 — Progress visibility
 Queued stages currently update on refresh. Once real renders take minutes rather

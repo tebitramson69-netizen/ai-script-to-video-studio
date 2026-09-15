@@ -40,10 +40,8 @@ class CostEstimator
 
         $shotSeconds = (float) $project->shots()
             ->whereIn('status', [
-                ShotStatus::Pending->value,
+                ...ShotStatus::needingRenderValues(),
                 ShotStatus::Queued->value,
-                ShotStatus::Failed->value,
-                ShotStatus::Stale->value,
             ])
             ->sum('target_duration_seconds');
 

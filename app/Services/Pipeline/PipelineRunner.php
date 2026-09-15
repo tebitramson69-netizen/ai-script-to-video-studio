@@ -71,11 +71,7 @@ class PipelineRunner
         $this->costs->assertWithinBudget($project);
 
         $pending = $project->shots()
-            ->whereIn('status', [
-                ShotStatus::Pending->value,
-                ShotStatus::Failed->value,
-                ShotStatus::Stale->value,
-            ])
+            ->whereIn('status', ShotStatus::needingRenderValues())
             ->get();
 
         $pending->each(function (Shot $shot) {
@@ -125,13 +121,49 @@ class PipelineRunner
      *
      * @throws BudgetExceededException
      */
-    public function generateAudio(Project $project): void
+    public function generateAudio(Project $project, bool $force = false): void
     {
         $this->costs->assertWithinBudget($project);
 
         Bus::chain([
-            new GenerateNarrationJob($project->getKey()),
+            new GenerateNarrationJob($project->getKey(), $force),
+            new GenerateMusicJob($project->getKey(), $force),
+            new FinalizeAudioJob($project->getKey()),
+        ])->dispatch();
+    }
+
+    /**
+     * FR-15: regenerate narration on its own.
+     *
+     * Music is re-run unforced afterwards because re-measured narration may have
+     * moved the timeline — if it did not, that step costs nothing.
+     *
+     * @throws BudgetExceededException
+     */
+    public function regenerateNarration(Project $project): void
+    {
+        $this->costs->assertWithinBudget($project);
+        $this->stateMachine->audioInvalidated($project);
+
+        Bus::chain([
+            new GenerateNarrationJob($project->getKey(), force: true),
             new GenerateMusicJob($project->getKey()),
+            new FinalizeAudioJob($project->getKey()),
+        ])->dispatch();
+    }
+
+    /**
+     * FR-15: regenerate music on its own, leaving narration untouched.
+     *
+     * @throws BudgetExceededException
+     */
+    public function regenerateMusic(Project $project): void
+    {
+        $this->costs->assertWithinBudget($project);
+        $this->stateMachine->audioInvalidated($project);
+
+        Bus::chain([
+            new GenerateMusicJob($project->getKey(), force: true),
             new FinalizeAudioJob($project->getKey()),
         ])->dispatch();
     }

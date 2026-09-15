@@ -84,6 +84,25 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Fake driver pricing
+    |--------------------------------------------------------------------------
+    |
+    | The local fake drivers really are free, so these default to zero. They are
+    | configurable so that budget and cost behaviour can be exercised in tests —
+    | and so you can dry-run a project's economics against a provider's published
+    | rates before committing to that provider.
+    |
+    */
+
+    'fake_costs' => [
+        'image_usd' => (float) env('STUDIO_FAKE_IMAGE_COST', 0.0),
+        'tts_per_1k_chars_usd' => (float) env('STUDIO_FAKE_TTS_COST', 0.0),
+        'music_per_minute_usd' => (float) env('STUDIO_FAKE_MUSIC_COST', 0.0),
+        'sfx_per_effect_usd' => (float) env('STUDIO_FAKE_SFX_COST', 0.0),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Audio
     |--------------------------------------------------------------------------
     */

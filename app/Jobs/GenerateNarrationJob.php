@@ -7,9 +7,11 @@ use App\Contracts\Data\SpeechRequest;
 use App\Contracts\SpeechSynthesizer;
 use App\Enums\AssetType;
 use App\Models\Project;
+use App\Models\Shot;
 use App\Services\Cost\CostEstimator;
 use App\Services\Media\FfmpegRunner;
 use App\Services\Pipeline\AssetRecorder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
 use Throwable;
 
@@ -26,7 +28,15 @@ use Throwable;
  */
 class GenerateNarrationJob extends StudioJob
 {
-    public function __construct(public int $projectId) {}
+    /**
+     * @param  bool  $force  re-synthesise everything, even segments that already
+     *                       have audio (FR-15, the owner's explicit "regenerate
+     *                       narration"). Without it the stage only fills gaps.
+     */
+    public function __construct(
+        public int $projectId,
+        public bool $force = false,
+    ) {}
 
     public function handle(
         SpeechSynthesizer $speech,
@@ -46,13 +56,28 @@ class GenerateNarrationJob extends StudioJob
             return;
         }
 
-        $totalCharacters = $shots->sum(fn ($shot) => mb_strlen((string) $shot->narration_segment));
+        if ($this->force) {
+            $this->discardExistingAudio($project, $shots);
+        }
+
+        // NFR-3: only pay for what is actually missing or has changed. Without
+        // this, pressing the audio button twice bills the whole narration twice.
+        $stale = $shots->filter(fn ($shot) => $this->needsSynthesis($shot));
+
+        $totalCharacters = $stale->sum(fn ($shot) => mb_strlen((string) $shot->narration_segment));
         $costs->assertCanSpend(
             $project,
             ($totalCharacters / 1000) * $speech->costPer1kCharactersUsd(),
             'Narration',
         );
 
+        // Nothing changed and a combined track already exists: there is no work
+        // to do and nothing to charge for.
+        if ($stale->isEmpty() && $project->narrationAsset() !== null) {
+            return;
+        }
+
+        $temporaryPaths = [];
         $segmentPaths = [];
 
         foreach ($shots as $shot) {
@@ -62,7 +87,16 @@ class GenerateNarrationJob extends StudioJob
             // silence of that length to the narration track so the following
             // shots stay in sync.
             if ($text === '') {
-                $segmentPaths[] = $this->silence($ffmpeg, (float) $shot->target_duration_seconds);
+                $silence = $this->silence($ffmpeg, (float) $shot->target_duration_seconds);
+                $temporaryPaths[] = $silence;
+                $segmentPaths[] = $silence;
+
+                continue;
+            }
+
+            // Already voiced and unchanged: reuse the audio we have paid for.
+            if (! $this->needsSynthesis($shot)) {
+                $segmentPaths[] = $shot->narrationAsset->absolutePath();
 
                 continue;
             }
@@ -75,6 +109,18 @@ class GenerateNarrationJob extends StudioJob
                 voiceId: $project->voice_id,
             ));
 
+            // Stamp the spoken text onto the asset here rather than asking every
+            // driver to remember to. It is what needsSynthesis() compares against
+            // to decide whether an edited scene has invalidated this audio.
+            $media = new GeneratedMedia(
+                path: $media->path,
+                mime: $media->mime,
+                model: $media->model,
+                costUsd: $media->costUsd,
+                durationSeconds: $media->durationSeconds,
+                meta: array_merge($media->meta, ['text' => $text]),
+            );
+
             $asset = $recorder->record(
                 project: $project,
                 type: AssetType::Narration,
@@ -83,6 +129,9 @@ class GenerateNarrationJob extends StudioJob
                 provider: $speech->providerName(),
                 durationMs: (int) ((microtime(true) - $startedAt) * 1000),
             );
+
+            // The audio this replaces is now dead weight on disk.
+            $shot->narrationAsset?->delete();
 
             // The measured duration is now the master clock for this shot.
             $shot->forceFill([
@@ -93,7 +142,58 @@ class GenerateNarrationJob extends StudioJob
             $segmentPaths[] = $asset->absolutePath();
         }
 
+        // The combined track is derived from the segments, so any change to them
+        // invalidates it. Replace it rather than stacking a new one alongside.
+        $project->assets()
+            ->where('type', AssetType::NarrationTrack)
+            ->get()
+            ->each->delete();
+
         $this->storeCombinedTrack($project, $recorder, $ffmpeg, $segmentPaths, $speech->providerName());
+
+        foreach ($temporaryPaths as $path) {
+            @unlink($path);
+        }
+    }
+
+    /**
+     * A shot needs synthesis when it has no narration audio at all, when the
+     * stored file has gone missing, or when its text no longer matches what was
+     * spoken — which is exactly what happens after the owner edits a scene.
+     */
+    protected function needsSynthesis(Shot $shot): bool
+    {
+        if ($this->force) {
+            return true;
+        }
+
+        $asset = $shot->narrationAsset;
+
+        if ($asset === null || ! $asset->exists()) {
+            return true;
+        }
+
+        return trim((string) ($asset->meta['text'] ?? '')) !== trim((string) $shot->narration_segment);
+    }
+
+    /**
+     * FR-15: an explicit regeneration replaces the old audio rather than piling
+     * a second copy on top of it. The usage records survive the deletion, so the
+     * project's spend history stays complete.
+     *
+     * @param  Collection<int, Shot>  $shots
+     */
+    protected function discardExistingAudio(Project $project, $shots): void
+    {
+        $shots->each(function (Shot $shot) {
+            $shot->narrationAsset?->delete();
+            $shot->forceFill(['narration_asset_id' => null])->save();
+        });
+
+        $project->assets()
+            ->where('type', AssetType::NarrationTrack)
+            ->get()
+            ->each->delete();
     }
 
     /**
