@@ -36,14 +36,59 @@ it forward. Until it is resolved the studio runs on fake drivers, which is
 genuinely useful — you can build, demo and test the whole flow — but it produces
 placeholder media, not real video.
 
-**Do this first, before writing another line of code:**
+### Resolving D4: pick the aggregator in two stages, not one
 
-1. Establish a payment method that a USD-billed AI API will accept.
-2. Fund **one** aggregator account (fal.ai or Replicate). One billing
-   relationship, many models — that is the single most important architectural
-   choice for a solo build (PRD §10).
-3. Verify a **$1 test spend** actually clears end to end before building against
-   the API.
+D4 was left open because the binding constraint is **billing, not model
+catalogue**. An aggregator with the perfect model list is worthless if your card
+is declined at its checkout. So decide it in that order.
+
+**Stage A — which one takes your money.**
+
+Prefer a provider with a **prepaid credit** model over one that bills in
+arrears. Prepaid gives you a hard ceiling that no bug, runaway loop or
+mis-estimated shot count can exceed — it complements the app's own budget cap
+rather than duplicating it. Postpaid means a mistake becomes an invoice.
+
+At the time of writing, from secondary sources only (both providers' own sites
+were unreachable from the build environment — **verify these yourself before
+relying on them**):
+
+| | Billing model | Minimum | Notes |
+|---|---|---|---|
+| Replicate | Prepaid credit for new accounts | ~$5 to start, ~$15 auto-reload | No monthly fee, no minimum spend |
+| fal.ai | Prepaid credits | not confirmed | Credits expire after ~365 days; charged only for successful outputs |
+
+Try whichever is cheaper to *fail* at. A declined card costs nothing; the point
+of Stage A is to find out fast.
+
+**Stage B — which one has the models.**
+
+Only once money has actually cleared. Confirm the aggregator hosts a video model
+with the clip lengths and quality Phase 1 needs, then write its **real** clip
+lengths into `config/studio.php`. Do not take this from any document, including
+this one: model availability across aggregators changes monthly, which is the
+entire reason the codebase is provider-agnostic.
+
+### The payment checklist
+
+1. **Get a payment method that works for USD online payments from Cameroon.**
+   This is the actual blocker. Locally-issued cards are frequently declined for
+   international charges because of FX controls and international spending
+   limits set by the bank or central bank, not by the AI provider. The common
+   workaround is a virtual USD card from a fintech — but most published guides
+   on this are Nigeria-focused, so confirm what actually works for **Cameroon**
+   and for **recurring USD API charges** specifically, not just one-off
+   e-commerce.
+2. **Fund the smallest top-up the provider allows** (Replicate's prepaid minimum
+   appears to be about $5 — confirm on their billing page). Do not fund more
+   until a charge has cleared.
+3. **Make one real API call by hand** — curl, or the provider's playground —
+   before writing a line of adapter code. You are testing the billing
+   relationship, not the integration.
+4. **Check the invoice.** Confirm the amount charged matches what you expected,
+   and note the FX rate and any foreign-transaction fee your bank added. That fee
+   is part of your true cost per video and belongs in the numbers in
+   `config/studio.php`.
 
 Only once (3) succeeds does the next section become worth starting.
 
