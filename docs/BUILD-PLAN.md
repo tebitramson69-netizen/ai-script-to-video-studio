@@ -36,6 +36,13 @@ it forward. Until it is resolved the studio runs on fake drivers, which is
 genuinely useful — you can build, demo and test the whole flow — but it produces
 placeholder media, not real video.
 
+> **Provider comparison: see `docs/PROVIDER-RESEARCH.md`** (15 Sep 2026). It
+> evaluates fal.ai, Replicate, Google Vertex/Gemini and ElevenLabs against this
+> system's actual requirements, and recommends **starting with fal.ai**. It also
+> found that **both platforms give free signup credit without a card** — so
+> Phase 1 may be completable before any payment is needed. Read it before
+> funding anything.
+
 ### Resolving D4: pick the aggregator in two stages, not one
 
 D4 was left open because the binding constraint is **billing, not model

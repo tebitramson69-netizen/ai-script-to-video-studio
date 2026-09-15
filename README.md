@@ -217,5 +217,5 @@ Stated plainly rather than left for you to discover:
 | D1 | Relationship to `"Ai"` | Standalone project — `"Ai"` was not accessible to verify |
 | D2 | Stack | **Laravel** (queues, migrations, policies, CSRF fit the requirements) |
 | D3 | Language scope | **English-only v1**; `projects.language` exists for Phase 3 |
-| D4 | Aggregator | Aggregator-*shaped* interface. Concrete choice is a **billing decision before a model decision** — prefer prepaid credit over billing in arrears. See `docs/BUILD-PLAN.md`. |
+| D4 | Aggregator | **Recommended: fal.ai** — one billing relationship covers video, image, TTS and music, and its per-second output pricing matches our cost interfaces. Replicate is the fallback. Evidence and confidence levels in `docs/PROVIDER-RESEARCH.md`. |
 | D5 | v1 line | **Phase 1 narrated video, no on-screen lip-sync** |
