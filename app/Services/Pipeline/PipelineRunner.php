@@ -1,0 +1,143 @@
+<?php
+
+namespace App\Services\Pipeline;
+
+use App\Contracts\VideoGenerator;
+use App\Enums\ShotStatus;
+use App\Exceptions\BudgetExceededException;
+use App\Jobs\AssembleProjectJob;
+use App\Jobs\FinalizeAudioJob;
+use App\Jobs\GenerateCharacterCandidatesJob;
+use App\Jobs\GenerateMusicJob;
+use App\Jobs\GenerateNarrationJob;
+use App\Jobs\PlanShotsJob;
+use App\Jobs\RenderShotJob;
+use App\Jobs\StructureScriptJob;
+use App\Models\Character;
+use App\Models\Project;
+use App\Models\Shot;
+use App\Services\Cost\CostEstimator;
+use Illuminate\Support\Facades\Bus;
+
+/**
+ * The only thing that dispatches pipeline work.
+ *
+ * Controllers call these methods; they never construct jobs themselves. That
+ * keeps "what runs, in what order, and what it is allowed to cost" in one file
+ * instead of spread across HTTP handlers.
+ */
+class PipelineRunner
+{
+    public function __construct(
+        protected CostEstimator $costs,
+        protected ProjectStateMachine $stateMachine,
+    ) {}
+
+    public function parseScript(Project $project): void
+    {
+        StructureScriptJob::dispatch($project->getKey());
+    }
+
+    /**
+     * Generate reference candidates for every character that has none locked.
+     *
+     * @throws BudgetExceededException
+     */
+    public function generateCharacterCandidates(Project $project): void
+    {
+        $this->costs->assertWithinBudget($project);
+
+        $project->characters()
+            ->whereNull('canonical_reference_asset_id')
+            ->get()
+            ->each(fn (Character $c) => GenerateCharacterCandidatesJob::dispatch($c->getKey()));
+    }
+
+    public function planShots(Project $project): void
+    {
+        PlanShotsJob::dispatch($project->getKey());
+    }
+
+    /**
+     * Render every shot that still needs it: never-rendered, failed, or stale.
+     *
+     * Already-rendered shots are skipped, so re-running this stage after a
+     * partial failure costs only the shots that actually failed (NFR-3).
+     *
+     * @throws BudgetExceededException
+     */
+    public function renderShots(Project $project): int
+    {
+        $this->costs->assertWithinBudget($project);
+
+        $pending = $project->shots()
+            ->whereIn('status', [
+                ShotStatus::Pending->value,
+                ShotStatus::Failed->value,
+                ShotStatus::Stale->value,
+            ])
+            ->get();
+
+        $pending->each(function (Shot $shot) {
+            $shot->forceFill(['status' => ShotStatus::Queued])->save();
+            RenderShotJob::dispatch($shot->getKey());
+        });
+
+        return $pending->count();
+    }
+
+    /**
+     * Regenerate a single shot (FR-10). Invalidates assembly only (§8).
+     *
+     * @throws BudgetExceededException
+     */
+    public function regenerateShot(Project $project, Shot $shot, ?string $newPrompt = null): void
+    {
+        $this->stateMachine->shotInvalidated($project, $shot);
+
+        if ($newPrompt !== null && trim($newPrompt) !== '') {
+            $shot->forceFill([
+                'prompt' => $newPrompt,
+
+                // A new prompt with the old seed would fight the change. A fresh
+                // seed is what the owner means by "try again".
+                'seed' => random_int(1, 2_000_000_000),
+            ])->save();
+        }
+
+        $this->costs->assertCanSpend(
+            $project,
+            (float) $shot->target_duration_seconds * app(VideoGenerator::class)->costPerSecondUsd(),
+            "Shot #{$shot->sequence}",
+        );
+
+        $shot->forceFill(['status' => ShotStatus::Queued])->save();
+        RenderShotJob::dispatch($shot->getKey());
+    }
+
+    /**
+     * Narration, then music, then mark VOICE_READY.
+     *
+     * Chained rather than dispatched in parallel: music length is derived from
+     * the *measured* narration durations that the narration job writes back
+     * (FR-16), so running them concurrently would size the music from stale
+     * estimates.
+     *
+     * @throws BudgetExceededException
+     */
+    public function generateAudio(Project $project): void
+    {
+        $this->costs->assertWithinBudget($project);
+
+        Bus::chain([
+            new GenerateNarrationJob($project->getKey()),
+            new GenerateMusicJob($project->getKey()),
+            new FinalizeAudioJob($project->getKey()),
+        ])->dispatch();
+    }
+
+    public function export(Project $project): void
+    {
+        AssembleProjectJob::dispatch($project->getKey());
+    }
+}

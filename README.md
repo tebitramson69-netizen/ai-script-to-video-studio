@@ -1,0 +1,203 @@
+# AI Script-to-Video Studio
+
+Turns a script into a narrated, multi-scene video with consistent characters.
+
+Built from `AI_Script_to_Video_Studio_PRD_v1.0_FINAL.pdf`. This is **Phase 1** —
+script → scene breakdown → per-scene clip → one narration track → one music
+track → stitched `.mp4`.
+
+The product is an **orchestration layer, not a video model**. It does not
+generate video itself: it turns a script into a structured plan, calls external
+services for each media type, keeps characters visually consistent, and
+assembles the pieces into one exported file.
+
+---
+
+## Status: what actually works today
+
+The entire pipeline runs end to end **right now**, offline, at zero cost, using
+local `fake` drivers that emit real PNG/MP4/WAV files. `php artisan test`
+produces a genuine playable `.mp4` on every run.
+
+That is deliberate. PRD **A2** (payment access from Cameroon) is a hard
+prerequisite that is not yet solved, and **A1** (funded provider keys) depends on
+it. Building the orchestration against interfaces first means the day those are
+solved, going live is a `.env` change plus one adapter class per provider — not
+a rewrite.
+
+| PRD requirement | State |
+|---|---|
+| FR-1 – FR-3 script → editable scene list | Done |
+| FR-4 – FR-6 character detection, candidates, canonical lock | Done |
+| FR-8 – FR-11 shot prompts, per-shot render, regenerate, budget cap | Done |
+| FR-12 – FR-15 narration, music, native-audio mute, regenerate | Done |
+| FR-16 – FR-18 narration-as-master-clock timing, splitting, trim/hold | Done |
+| FR-19 – FR-21 stitch, mix with ducking, export `.mp4` | Done |
+| FR-22 persistence and resume | Done |
+| NFR-1 – NFR-6 async, resilience, idempotency, cost, logging, portability | Done |
+| NFR-7 retention / purge intermediates | **Not built** — see Known gaps |
+| FR-7 multi-angle reference sheets | Phase 2 |
+| FR-13 per-scene SFX | Phase 2 (interface exists, not wired to the timeline) |
+| Lip-sync, multilingual (EN/FR/Pidgin), captions | Phase 3 |
+| Real provider adapters (fal.ai, ElevenLabs, …) | **Not built** — blocked on A1/A2 |
+
+---
+
+## Requirements
+
+- PHP 8.2+ (developed on 8.4)
+- Composer
+- MySQL 8 (or SQLite for local work)
+- **FFmpeg and FFprobe on PATH** — assembly will not work without them
+
+## Setup
+
+```bash
+composer install
+cp .env.example .env
+php artisan key:generate
+
+# SQLite (fastest way to try it)
+touch database/database.sqlite
+php artisan migrate
+
+php artisan studio:create-owner        # there is no public sign-up (NG2)
+```
+
+Two processes, because all generation is queued (NFR-1):
+
+```bash
+php artisan serve
+php artisan queue:work --tries=4       # in a second terminal
+```
+
+Open `http://127.0.0.1:8000`, sign in, paste a script.
+
+### Running on XAMPP / MySQL
+
+```dotenv
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=studio
+DB_USERNAME=root
+DB_PASSWORD=
+
+FFMPEG_BINARY=C:\ffmpeg\bin\ffmpeg.exe
+FFPROBE_BINARY=C:\ffmpeg\bin\ffprobe.exe
+```
+
+Point Apache's DocumentRoot at `public/`, never at the project root.
+
+**XAMPP is fine for building; it is not enough for real runs.** PRD A4: queued
+generation needs an always-on worker process, which Apache does not give you. On
+a VPS, run `queue:work` under Supervisor or systemd.
+
+## Tests
+
+```bash
+php artisan test
+```
+
+52 tests. The end-to-end test renders real media through FFmpeg and takes about
+35 seconds; it skips itself if FFmpeg is missing.
+
+---
+
+## Architecture
+
+### The pipeline is a state machine (PRD §8)
+
+```
+DRAFT → SCRIPTING → SCRIPT_READY → CHARACTERS_READY → SCENES_READY
+      → SHOTS_READY → VOICE_READY → EXPORT_READY
+```
+
+`App\Services\Pipeline\ProjectStateMachine` is the **only** thing that writes
+`projects.status`, and it owns the invalidation rule:
+
+- editing the scene list → back to `SCRIPT_READY`, all shots marked stale
+- re-locking a character → only *that character's* shots go stale, back to `SCENES_READY`
+- regenerating one shot → invalidates assembly only
+- stale assets are **marked, not deleted**; export is blocked while any shot is stale
+
+Invalidation is easy to get right in one class and impossible to get right spread
+across seven controllers.
+
+### Everything external is behind an interface (NFR-6)
+
+```
+app/Contracts/          ScriptStructurer, ImageGenerator, VideoGenerator,
+                        SpeechSynthesizer, MusicGenerator, SoundEffectGenerator
+app/Integrations/Fake/  working local implementations of all six
+config/studio.php       which driver satisfies which interface
+```
+
+Swapping Kling → Veo, or fal.ai → Replicate, is a config line plus an adapter
+class. No pipeline code changes. See `docs/PROVIDERS.md`.
+
+### Timing: narration is the master clock (FR-16 – FR-18)
+
+`App\Services\Timing\ShotPlanner` takes the model's supported clip lengths *as
+data*, so the same rules hold for every provider:
+
+1. estimate narration duration (~150 wpm + punctuation pauses)
+2. round **up** to the nearest clip length the model will actually render — never
+   down, which would cut narration off mid-sentence
+3. if a scene's narration exceeds the longest clip, split it on sentence
+   boundaries into shots sharing the same cast and setting
+4. at assembly, trim a clip that outruns its narration, or hold its last frame if
+   real TTS ran longer than the estimate
+
+Narration is synthesised **per shot**, then concatenated into the single
+project-level track. That is what makes per-scene timing measurable while still
+producing the one continuous voiceover Phase 1 calls for.
+
+### Cost control (FR-11, NFR-4)
+
+Prices come from the drivers, not a table — so a model swap re-prices the
+estimate automatically. `CostEstimator::assertWithinBudget()` runs *before* any
+job is queued; the cap is hard, and `AssetRecorder` makes it impossible to store
+an asset without also writing its usage record.
+
+### Security (§14)
+
+- API keys are server-side env vars; the browser never holds a credential
+- generated media sits on the **private** disk and is served only through
+  `AssetController` behind auth and the project policy
+- every state-changing route is POST/PATCH/DELETE inside the CSRF-protected `web`
+  group — nothing that spends money is reachable by a GET
+- Eloquent everywhere (no raw SQL), Blade `{{ }}` everywhere (no `{!! !!}`)
+- login is rate-limited; no public registration
+- the script is treated as **data**, never as instructions, when building prompts
+- FFmpeg is invoked with argument arrays, never a shell string
+
+---
+
+## Known gaps
+
+Stated plainly rather than left for you to discover:
+
+1. **No real provider adapters.** Blocked on PRD A1/A2. `docs/PROVIDERS.md` gives
+   the exact shape to implement. I did not write speculative fal.ai/ElevenLabs
+   HTTP clients, because an unverified request payload is worse than none.
+2. **NFR-7 retention is not implemented.** `AssetType::isPurgeable()` marks shot
+   clips as purgeable and the storage cost is real, but there is no purge command
+   or storage-used display yet.
+3. **Per-scene SFX (FR-13, Phase 2)** has an interface and a fake driver, but is
+   not placed on the assembly timeline.
+4. **No polling/websockets.** Queued stages update on page refresh.
+5. **The `"Ai"` Laravel project (PRD D1/A5) was never inspected** — it was not
+   reachable from the environment this was built in. Nothing here assumes the
+   shape of its `usage_records` table; this project defines its own. If you do
+   want to merge the two, that reconciliation is still open.
+
+## Open PRD decisions
+
+| | Decision | Resolved as |
+|---|---|---|
+| D1 | Relationship to `"Ai"` | Standalone project — `"Ai"` was not accessible to verify |
+| D2 | Stack | **Laravel** (queues, migrations, policies, CSRF fit the requirements) |
+| D3 | Language scope | **English-only v1**; `projects.language` exists for Phase 3 |
+| D4 | Aggregator | Aggregator-*shaped* interface; concrete choice deferred to A2 |
+| D5 | v1 line | **Phase 1 narrated video, no on-screen lip-sync** |
