@@ -9,9 +9,11 @@ use App\Models\Character;
 use App\Models\Project;
 use App\Models\Scene;
 use App\Services\Pipeline\ProjectStateMachine;
+use App\Services\Provider\ModelRegistry;
 use App\Services\Timing\ShotPlanner;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use RuntimeException;
 
 /**
  * Stage 3 (PRD §8): turn scenes into renderable shots with prompts and target
@@ -33,6 +35,14 @@ class PlanShotsJob extends StudioJob
 
         if ($project === null || $project->scenes->isEmpty()) {
             return;
+        }
+
+        // Planning is free, rendering is not. Refuse here rather than letting
+        // the owner queue a run whose every shot the model will reject.
+        $incompatibility = app(ModelRegistry::class)->incompatibilityReason($project);
+
+        if ($incompatibility !== null) {
+            throw new RuntimeException("Cannot plan shots: {$incompatibility}");
         }
 
         $clipLengths = $video->supportedClipLengths();

@@ -2,6 +2,7 @@
 
 use App\Integrations\Fake\FakeImageGenerator;
 use App\Integrations\Fake\FakeMusicGenerator;
+use App\Integrations\Fake\FakeQueueableVideoGenerator;
 use App\Integrations\Fake\FakeScriptStructurer;
 use App\Integrations\Fake\FakeSoundEffectGenerator;
 use App\Integrations\Fake\FakeSpeechSynthesizer;
@@ -43,6 +44,11 @@ return [
         ],
         'video_generator' => [
             'fake' => FakeVideoGenerator::class,
+
+            // The same local renderer behind a simulated queue, so the
+            // submit -> poll -> collect lifecycle is exercised without a
+            // provider account.
+            'fake-queue' => FakeQueueableVideoGenerator::class,
         ],
         'speech_synthesizer' => [
             'fake' => FakeSpeechSynthesizer::class,
@@ -176,6 +182,21 @@ return [
     | rates before committing to that provider.
     |
     */
+
+    /*
+    |--------------------------------------------------------------------------
+    | Fake queue behaviour
+    |--------------------------------------------------------------------------
+    |
+    | How many status checks the fake queueing driver makes a caller wait before
+    | reporting completion. Zero completes on the first poll; higher values let
+    | a test assert the pipeline genuinely waits rather than quietly blocking.
+    |
+    */
+
+    'fake_queue' => [
+        'polls_before_complete' => (int) env('STUDIO_FAKE_QUEUE_POLLS', 0),
+    ],
 
     'fake_costs' => [
         'image_usd' => (float) env('STUDIO_FAKE_IMAGE_COST', 0.0),

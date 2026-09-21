@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Contracts\Data\ClipRequest;
+use App\Contracts\QueueableVideoGenerator;
 use App\Contracts\VideoGenerator;
 use App\Enums\AssetType;
 use App\Enums\GenerationMode;
@@ -12,6 +13,7 @@ use App\Models\Shot;
 use App\Services\Cost\CostEstimator;
 use App\Services\Pipeline\AssetRecorder;
 use App\Services\Pipeline\ProjectStateMachine;
+use App\Services\Provider\ShotSubmitter;
 use Throwable;
 
 /**
@@ -48,6 +50,15 @@ class RenderShotJob extends StudioJob
 
         // Request-aware: resolution and the audio toggle both move the rate.
         $costs->assertCanSpend($project, $video->estimateCostUsd($request), "Shot #{$shot->sequence}");
+
+        // A queueing provider is handed the work and released. The request id
+        // outlives this worker, so a restart between submission and collection
+        // loses nothing — the reconciler picks it up from the ledger.
+        if ($video instanceof QueueableVideoGenerator) {
+            $this->submitAsync($shot, $request, $video);
+
+            return;
+        }
 
         $shot->forceFill([
             'status' => ShotStatus::Rendering,
@@ -103,6 +114,54 @@ class RenderShotJob extends StudioJob
         // no coordinator job required.
         if ($project->fresh()->unrenderedShotCount() === 0) {
             $stateMachine->advanceTo($project->fresh(), ProjectStatus::ShotsReady);
+        }
+    }
+
+    /**
+     * Hand the shot to a queueing provider.
+     *
+     * Failure here is a submission failure, not a generation failure: nothing
+     * has been generated yet, so a transient error is safe to rethrow and let
+     * the queue retry. The ledger claim survives, which is what stops the retry
+     * from becoming a second paid submission.
+     */
+    protected function submitAsync(Shot $shot, ClipRequest $request, QueueableVideoGenerator $video): void
+    {
+        try {
+            $outcome = app(ShotSubmitter::class)->submit($shot, $request, $video);
+        } catch (Throwable $e) {
+            $shot->forceFill([
+                'status' => ShotStatus::Failed,
+                'error' => $e->getMessage(),
+            ])->save();
+
+            if ($this->shouldStopRetrying($e)) {
+                $this->fail($e);
+
+                return;
+            }
+
+            throw $e;
+        }
+
+        // Identical work already succeeded: adopt its asset rather than paying
+        // for the same clip a second time.
+        if ($outcome->kind === 'already_completed' && $outcome->request->asset_id !== null) {
+            $shot->forceFill([
+                'asset_id' => $outcome->request->asset_id,
+                'status' => ShotStatus::Rendered,
+                'cost_usd' => 0,
+                'rendered_at' => now(),
+            ])->save();
+
+            return;
+        }
+
+        if ($outcome->kind === 'previously_failed') {
+            $shot->forceFill([
+                'status' => ShotStatus::Failed,
+                'error' => $outcome->message(),
+            ])->save();
         }
     }
 

@@ -10,6 +10,7 @@ use App\Models\Project;
 use App\Services\Cost\CostEstimator;
 use App\Services\Pipeline\PipelineRunner;
 use App\Services\Pipeline\ProjectStateMachine;
+use App\Services\Provider\ModelRegistry;
 use App\Services\Retention\RetentionManager;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -25,13 +26,21 @@ class ProjectController extends Controller
         ]);
     }
 
-    public function create(): View
+    public function create(ModelRegistry $models): View
     {
-        return view('projects.create');
+        $videoModel = $models->defaultVideo();
+
+        return view('projects.create', [
+            'videoModel' => $videoModel,
+            'aspectRatios' => $models->aspectRatiosFor($videoModel),
+        ]);
     }
 
-    public function store(StoreProjectRequest $request, PipelineRunner $runner): RedirectResponse
-    {
+    public function store(
+        StoreProjectRequest $request,
+        PipelineRunner $runner,
+        ModelRegistry $models,
+    ): RedirectResponse {
         $project = $request->user()->projects()->create([
             'title' => $request->validated('title'),
             'aspect_ratio' => $request->validated('aspect_ratio'),
@@ -39,6 +48,11 @@ class ProjectController extends Controller
             'script' => $request->scriptText(),
             'status' => ProjectStatus::Draft,
             'language' => 'en',
+
+            // Pinned at creation. The aspect ratio was validated against this
+            // model, so letting the global default drift later would silently
+            // invalidate that check.
+            'video_model' => $models->defaultVideo()->key,
         ]);
 
         // Parsing is free and instant, so there is no reason to make the owner

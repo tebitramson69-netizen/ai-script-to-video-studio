@@ -99,7 +99,7 @@ a VPS, run `queue:work` under Supervisor or systemd.
 php artisan test
 ```
 
-95 tests. The end-to-end test renders real media through FFmpeg and takes about
+112 tests. The end-to-end test renders real media through FFmpeg and takes about
 35 seconds; it skips itself if FFmpeg is missing.
 
 ---
@@ -176,6 +176,20 @@ provider parameter rather than generating audio and stripping it afterwards.
 Paid calls go through `provider_requests`, whose `fingerprint` column carries a
 UNIQUE index. Idempotency is enforced by the database refusing a duplicate
 insert, not by a lookup that two workers can both pass.
+
+Long-running generation is **submitted, not awaited**. A provider that queues
+implements `QueueableVideoGenerator`; `RenderShotJob` then hands the work over
+and releases the worker, and `ReconcileProviderRequestsJob` collects finished
+results on a schedule. The request id lives in the ledger, so a worker restart
+between submission and collection loses nothing — which matters because the
+provider carries on generating, and charging, either way.
+
+Polling is the primary completion path rather than a fallback. Webhooks get
+lost, arrive out of order, and mutate billing state; they stay disabled until
+their signature scheme is verified against a live account.
+
+Set `STUDIO_VIDEO_DRIVER=fake-queue` to run that whole lifecycle locally, with
+`STUDIO_FAKE_QUEUE_POLLS` controlling how long the fake provider makes you wait.
 
 See `docs/IMPLEMENTATION-PLAN.md` for the sequence and the open questions.
 

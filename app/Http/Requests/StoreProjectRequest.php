@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use App\Enums\AspectRatio;
+use App\Services\Provider\ModelRegistry;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
@@ -24,7 +25,18 @@ class StoreProjectRequest extends FormRequest
 
             // FR-2: aspect ratio is a creation-time decision and cannot change
             // once shots exist, so it is validated here and never in an update.
-            'aspect_ratio' => ['required', Rule::enum(AspectRatio::class)],
+            //
+            // Restricted to what the rendering model can actually produce —
+            // Veo 3.1, for instance, has no 1:1. Catching it here costs nothing;
+            // catching it at render time costs a paid clip.
+            'aspect_ratio' => [
+                'required',
+                Rule::enum(AspectRatio::class),
+                Rule::in(array_map(
+                    fn (AspectRatio $r) => $r->value,
+                    app(ModelRegistry::class)->aspectRatiosFor(),
+                )),
+            ],
 
             'budget_cap_usd' => [
                 'required', 'numeric', 'min:0.01',

@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\MorphTo;
 
 class ProviderRequest extends Model
 {
@@ -19,6 +20,7 @@ class ProviderRequest extends Model
         'estimated_cost_usd', 'actual_cost_usd', 'request_payload',
         'provider_response', 'output_url', 'failure_reason', 'error_message',
         'attempts', 'submitted_at', 'completed_at',
+        'subject_type', 'subject_id',
     ];
 
     protected function casts(): array
@@ -43,6 +45,14 @@ class ProviderRequest extends Model
     public function asset(): BelongsTo
     {
         return $this->belongsTo(Asset::class);
+    }
+
+    /**
+     * The Shot or Project this generation belongs to.
+     */
+    public function subject(): MorphTo
+    {
+        return $this->morphTo();
     }
 
     /**

@@ -131,17 +131,42 @@ fal's HTTP details, which is why they could be built now.
 | **3. Audio-aware cost estimation** | **Done.** `estimateCostUsd(ClipRequest)`; resolution and audio both move the rate |
 | **4. Request ledger and idempotency** | **Done.** `provider_requests` + `GenerationLedger` with the unique-index claim |
 | **5. Regeneration correctness** | **Done.** Fresh seed on every regeneration |
-| **6. `FalClient`** | **Next — blocked on Tier C.** Auth, submit, status, result, error mapping |
-| **7. `FalVideoGenerator`** | Text-to-video first, forwarding `generate_audio=false` |
-| **8. Async job split** | `RenderShotJob` becomes submit + a separate completion path |
-| **9. Polling** | Scheduled reconciliation over `ProviderRequest::outstanding()` |
-| **10. Asset ingestion** | Download provider output into our storage; the provider URL is traceability only, never the artifact |
+| **6. Capability validation** | **Done.** `ModelRegistry`; unsupported aspect ratios refused at project creation and before planning, not at render time |
+| **7. Async submit/collect lifecycle** | **Done.** `QueueableVideoGenerator`, `ShotSubmitter`, `GenerationCompleter`; `RenderShotJob` takes the async path when the driver queues |
+| **8. Polling** | **Done.** `ReconcileProviderRequestsJob`, scheduled every minute with `withoutOverlapping` |
+| **9. `FalClient`** | **Next — blocked on Tier C.** Auth, submit, status, result, error mapping |
+| **10. `FalVideoGenerator`** | Implements `QueueableVideoGenerator`; text-to-video first, forwarding `generate_audio=false` |
+| **10a. Asset ingestion from URL** | Download provider output into our storage. Partly done: the completer already stores whatever the adapter returns; the HTTP download itself belongs in `FalClient` |
 | **11. Webhooks** | Only once the signature scheme is confirmed |
 | **12. Image-to-video** | Including the reference-upload step above |
 | **13. TTS and music** | After the core lifecycle is stable |
 | **14. Replicate fallback** | Same interfaces, no duplicated business logic |
 
-## What Step 6 needs from you
+## Why the lifecycle was built before the client
+
+The async machinery is provider-agnostic, so waiting for fal would have been
+waiting for nothing. It is also the part most likely to be got wrong under
+pressure, and hardest to test against a live provider — a worker dying between
+submission and collection is a two-line test against a fake and an expensive
+accident against fal.
+
+It is exercised by `FakeQueueableVideoGenerator`, the same local renderer behind
+a simulated queue that makes the caller wait a configurable number of polls. A
+fake that completed instantly would leave in-queue, in-progress and
+worker-restart untested — and those are exactly the states that lose track of
+work a provider is already charging for.
+
+`AsyncGenerationLifecycleTest` covers: submission returning without waiting, the
+pipeline refusing to complete early, collection into our own storage, cost
+reconciliation, double-submission being refused by the claim index, a repeated
+completion being idempotent (a webhook and a poll racing is normal), a worker
+restart between submit and collect losing nothing, and the reconciler correctly
+doing nothing for a synchronous driver.
+
+When `FalVideoGenerator` lands it implements three methods — `submitClip`,
+`checkStatus`, `fetchResult` — and inherits all of the above.
+
+## What Step 9 needs from you
 
 Four facts from the dashboard. Three go straight into `config/studio.php`:
 

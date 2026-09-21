@@ -13,7 +13,7 @@
 
             <label for="aspect_ratio">Output aspect ratio</label>
             <select id="aspect_ratio" name="aspect_ratio" required>
-                @foreach (\App\Enums\AspectRatio::cases() as $ratio)
+                @foreach ($aspectRatios as $ratio)
                     <option value="{{ $ratio->value }}" @selected(old('aspect_ratio') === $ratio->value)>
                         {{ $ratio->label() }}
                     </option>
@@ -21,7 +21,10 @@
             </select>
             {{-- FR-2: this is a creation-time decision precisely because changing
                  it after shots exist would mean re-rendering every one of them. --}}
-            <p class="hint">Locked once shots exist — changing it later means regenerating every shot.</p>
+            <p class="hint">
+                Locked once shots exist — changing it later means regenerating every shot.
+                Only ratios <strong>{{ $videoModel->label }}</strong> can produce are listed.
+            </p>
 
             <label for="budget_cap_usd">Budget cap (USD)</label>
             <input id="budget_cap_usd" name="budget_cap_usd" type="number" step="0.01" min="0.01"
