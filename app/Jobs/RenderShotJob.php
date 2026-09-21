@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Contracts\Data\ClipRequest;
 use App\Contracts\VideoGenerator;
 use App\Enums\AssetType;
+use App\Enums\GenerationMode;
 use App\Enums\ProjectStatus;
 use App\Enums\ShotStatus;
 use App\Models\Shot;
@@ -42,9 +43,11 @@ class RenderShotJob extends StudioJob
         }
 
         $project = $shot->project;
-        $estimatedCost = (float) $shot->target_duration_seconds * $video->costPerSecondUsd();
 
-        $costs->assertCanSpend($project, $estimatedCost, "Shot #{$shot->sequence}");
+        $request = $this->buildClipRequest($shot, $video);
+
+        // Request-aware: resolution and the audio toggle both move the rate.
+        $costs->assertCanSpend($project, $video->estimateCostUsd($request), "Shot #{$shot->sequence}");
 
         $shot->forceFill([
             'status' => ShotStatus::Rendering,
@@ -54,17 +57,7 @@ class RenderShotJob extends StudioJob
         $startedAt = microtime(true);
 
         try {
-            $media = $video->generateClip(new ClipRequest(
-                prompt: $shot->prompt,
-                durationSeconds: (float) $shot->target_duration_seconds,
-                aspectRatio: $project->aspect_ratio,
-                referenceImagePath: $this->referenceImagePath($shot),
-                seed: $shot->seed,
-
-                // FR-14: narrated project, so any audio the model produces is
-                // discarded — the TTS track is the only voice.
-                muteNativeAudio: true,
-            ));
+            $media = $video->generateClip($request);
         } catch (Throwable $e) {
             $shot->forceFill([
                 'status' => ShotStatus::Failed,
@@ -111,6 +104,44 @@ class RenderShotJob extends StudioJob
         if ($project->fresh()->unrenderedShotCount() === 0) {
             $stateMachine->advanceTo($project->fresh(), ProjectStatus::ShotsReady);
         }
+    }
+
+    /**
+     * Assemble the provider request for this shot.
+     *
+     * The conditioning mode is decided here, once, from whether a locked
+     * character reference is available — rather than left for each adapter to
+     * infer from a nullable path.
+     */
+    protected function buildClipRequest(Shot $shot, VideoGenerator $video): ClipRequest
+    {
+        $reference = $this->referenceImagePath($shot);
+        $capabilities = $video->capabilities();
+
+        $mode = ClipRequest::modeFor($reference);
+
+        // Fall back rather than fail: a model that cannot do image-to-video can
+        // still render the shot from its prompt, and losing the reference is a
+        // consistency problem, not a broken pipeline.
+        if (! $capabilities->supportsMode($mode)) {
+            $mode = GenerationMode::TextToVideo;
+            $reference = null;
+        }
+
+        return new ClipRequest(
+            prompt: $shot->prompt,
+            durationSeconds: (float) $shot->target_duration_seconds,
+            aspectRatio: $shot->project->aspect_ratio,
+            mode: $mode,
+            resolution: $capabilities->defaultResolution,
+            referenceImagePath: $reference,
+            seed: $shot->seed,
+
+            // FR-14: a narrated project must carry exactly one voice. On a model
+            // with a native-audio toggle the adapter forwards this so the audio
+            // is never generated — which is also the cheaper rate.
+            muteNativeAudio: true,
+        );
     }
 
     /**

@@ -4,6 +4,7 @@ namespace App\Integrations\Fake;
 
 use App\Contracts\Data\ClipRequest;
 use App\Contracts\Data\GeneratedMedia;
+use App\Contracts\Data\ModelCapabilities;
 use App\Contracts\ProviderException;
 use App\Contracts\VideoGenerator;
 use App\Services\Media\FfmpegRunner;
@@ -47,12 +48,14 @@ class FakeVideoGenerator implements VideoGenerator
             path: $path,
             mime: 'video/mp4',
             model: $this->modelName(),
-            costUsd: $duration * $this->costPerSecondUsd(),
+            costUsd: $this->estimateCostUsd($request),
             durationSeconds: $duration,
             meta: [
                 'seed' => $seed,
                 'prompt' => $request->prompt,
                 'aspect_ratio' => $request->aspectRatio->value,
+                'mode' => $request->mode->value,
+                'resolution' => $request->resolution->value,
                 'used_reference_image' => $request->referenceImagePath !== null,
                 'native_audio_muted' => $request->muteNativeAudio,
             ],
@@ -117,26 +120,39 @@ class FakeVideoGenerator implements VideoGenerator
         ];
     }
 
+    /**
+     * Built from the registry like any real model, so the fake exercises the
+     * same capability plumbing rather than a shortcut around it.
+     */
+    public function capabilities(): ModelCapabilities
+    {
+        return ModelCapabilities::fromConfig('fake', config('studio.video_models.fake', []));
+    }
+
+    public function estimateCostUsd(ClipRequest $request): float
+    {
+        return round(
+            $request->durationSeconds * $this->capabilities()->costPerSecondUsd(
+                $request->resolution,
+                withAudio: ! $request->muteNativeAudio,
+            ),
+            6,
+        );
+    }
+
     public function supportedClipLengths(): array
     {
-        /** @var list<float> $lengths */
-        $lengths = array_map(
-            'floatval',
-            config('studio.video_models.fake.clip_lengths', [5, 8, 10]),
-        );
-        sort($lengths);
-
-        return $lengths;
+        return $this->capabilities()->clipLengths;
     }
 
     public function costPerSecondUsd(): float
     {
-        return (float) config('studio.video_models.fake.cost_per_second_usd', 0.0);
+        return $this->capabilities()->costPerSecondUsd();
     }
 
     public function emitsNativeAudio(): bool
     {
-        return (bool) config('studio.video_models.fake.emits_native_audio', false);
+        return $this->capabilities()->emitsNativeAudio;
     }
 
     public function modelName(): string

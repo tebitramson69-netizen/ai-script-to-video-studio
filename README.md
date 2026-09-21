@@ -99,7 +99,7 @@ a VPS, run `queue:work` under Supervisor or systemd.
 php artisan test
 ```
 
-72 tests. The end-to-end test renders real media through FFmpeg and takes about
+95 tests. The end-to-end test renders real media through FFmpeg and takes about
 35 seconds; it skips itself if FFmpeg is missing.
 
 ---
@@ -159,6 +159,25 @@ Prices come from the drivers, not a table — so a model swap re-prices the
 estimate automatically. `CostEstimator::assertWithinBudget()` runs *before* any
 job is queued; the cap is hard, and `AssetRecorder` makes it impossible to store
 an asset without also writing its usage record.
+
+### Provider adapters
+
+Six focused capability interfaces (`app/Contracts/`), each bound independently
+in `config/studio.php` — so video can run on one provider while TTS runs on
+another. Shared provider plumbing lives in one client per provider rather than
+being repeated per capability.
+
+Model limits and prices live in the `video_models` registry and nowhere else
+(`ModelCapabilities`). Price is a function of **resolution and whether native
+audio is generated**, because on Veo 3.1 turning audio off halves the rate — and
+every narrated project turns it off (FR-14). The adapter forwards that as a
+provider parameter rather than generating audio and stripping it afterwards.
+
+Paid calls go through `provider_requests`, whose `fingerprint` column carries a
+UNIQUE index. Idempotency is enforced by the database refusing a duplicate
+insert, not by a lookup that two workers can both pass.
+
+See `docs/IMPLEMENTATION-PLAN.md` for the sequence and the open questions.
 
 ### Retention (NFR-7)
 

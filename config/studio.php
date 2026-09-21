@@ -71,12 +71,95 @@ return [
     |
     */
 
+    /*
+    |--------------------------------------------------------------------------
+    | Video model registry
+    |--------------------------------------------------------------------------
+    |
+    | One entry per model the studio can render with. Nothing in the business
+    | logic reads a model name or a price directly — everything goes through
+    | ModelCapabilities::fromConfig(), so adding or repricing a model is an edit
+    | here and nowhere else (NFR-6).
+    |
+    | `pricing` is per second of OUTPUT, split by resolution and by whether the
+    | model is asked to generate its own audio. That split is not cosmetic: on
+    | Veo 3.1 turning audio off halves the 720p/1080p rate, and every narrated
+    | project turns it off (FR-14).
+    |
+    | Model keys must not contain dots: config() resolves paths by dot notation,
+    | so "veo-3.1" would be read as ["veo-3"]["1"] and silently return null.
+    |
+    | VERIFY_IN_DASHBOARD marks a value not confirmed against a live fal account.
+    | Where a price is unverified it is deliberately set to the HIGHER known
+    | rate: over-estimating makes the budget cap refuse a run, while
+    | under-estimating lets it overspend. Err toward refusing.
+    |
+    */
+
     'video_models' => [
+
         'fake' => [
             'label' => 'Fake renderer (local, free)',
+            'endpoint' => null,
+            'modes' => ['text_to_video', 'image_to_video'],
             'clip_lengths' => [5, 8, 10],
-            'cost_per_second_usd' => 0.0,
+            'resolutions' => ['720p', '1080p'],
+            'aspect_ratios' => ['16:9', '9:16', '1:1'],
+            'default_resolution' => '720p',
+            'supports_native_audio_toggle' => true,
             'emits_native_audio' => false,
+            'cost_per_second_usd' => 0.0,
+        ],
+
+        // Pricing and limits below were read from fal's own model pages by the
+        // project owner on 21 Sep 2026. They are owner-verified, not verified by
+        // this codebase — re-check before relying on them (PRD §10).
+        'veo-3-1-fast' => [
+            'label' => 'Veo 3.1 Fast (fal)',
+            'endpoint' => env('STUDIO_VEO_FAST_ENDPOINT', 'fal-ai/veo3.1/fast'),
+            'modes' => ['text_to_video', 'image_to_video'],
+
+            // Owner-verified: 5-8 second clips. Modelled as whole seconds so the
+            // timing engine can round up to any of them (FR-16).
+            'clip_lengths' => [5, 6, 7, 8],
+
+            'resolutions' => ['720p', '1080p'],
+
+            // Owner-verified: 16:9 and 9:16 only. 1:1 is NOT available, so a
+            // square project cannot render on this model.
+            'aspect_ratios' => ['16:9', '9:16'],
+
+            'default_resolution' => '720p',
+            'supports_native_audio_toggle' => true,
+            'emits_native_audio' => true,
+
+            // VERIFY_IN_DASHBOARD: the Fast variant's rate was not supplied.
+            // Set to the Standard rate on purpose — see the over-estimate rule
+            // above. Correct this the moment the real figure is known; it is
+            // the single number with the most leverage over cost in the system.
+            'pricing' => [
+                '720p' => ['no_audio' => 0.20, 'audio' => 0.40],
+                '1080p' => ['no_audio' => 0.20, 'audio' => 0.40],
+            ],
+        ],
+
+        'veo-3-1' => [
+            'label' => 'Veo 3.1 Standard (fal)',
+            'endpoint' => env('STUDIO_VEO_ENDPOINT', 'fal-ai/veo3.1'),
+            'modes' => ['text_to_video', 'image_to_video'],
+            'clip_lengths' => [5, 6, 7, 8],
+            'resolutions' => ['720p', '1080p', '4k'],
+            'aspect_ratios' => ['16:9', '9:16'],
+            'default_resolution' => '720p',
+            'supports_native_audio_toggle' => true,
+            'emits_native_audio' => true,
+
+            // Owner-verified from fal's Veo 3.1 model page, 21 Sep 2026.
+            'pricing' => [
+                '720p' => ['no_audio' => 0.20, 'audio' => 0.40],
+                '1080p' => ['no_audio' => 0.20, 'audio' => 0.40],
+                '4k' => ['no_audio' => 0.40, 'audio' => 0.60],
+            ],
         ],
     ],
 

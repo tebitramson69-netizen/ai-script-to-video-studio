@@ -2,16 +2,46 @@
 
 Research date: **15 September 2026**. Decision owner: Tebit Ramson Titih.
 
-## Read this first: how much to trust anything below
+## Read this first: three tiers of evidence
 
-**No primary source in this document was read directly.** This session's egress
-policy blocked every vendor and reference site I tried — `replicate.com`,
-`fal.ai`, `developer.puter.com`, `swychr.com`, `businessincameroon.com` — five
-for five, on unrelated domains. Everything here comes from **search-engine
-summaries of third-party pages**, much of it SEO content written to rank for
-pricing queries.
+Claims in this document fall into three classes. Keeping them apart is the whole
+point of the document — the worst failure mode here is a third-party blog price
+hardening into a config constant nobody re-checks.
 
-Every claim is therefore tagged:
+### Tier A — Official fal documentation, read by the project owner
+
+Read directly from fal's own model pages by Tebit Ramson Titih on **21 Sep
+2026**. This is the most reliable tier and the only one config values are taken
+from. It is **not** verified by this codebase: fal.ai is blocked by the build
+environment's egress policy, so I could not confirm any of it myself.
+
+| Fact | Value |
+|---|---|
+| Veo 3.1 standard endpoint | `fal-ai/veo3.1` |
+| Veo 3.1 fast endpoint | `fal-ai/veo3.1/fast` |
+| Price, 720p/1080p, no audio | **$0.20 / sec** |
+| Price, 720p/1080p, with audio | **$0.40 / sec** |
+| Price, 4K, no audio | **$0.40 / sec** |
+| Price, 4K, with audio | **$0.60 / sec** |
+| Explicit audio control | `generate_audio` parameter |
+| Clip duration | 5–8 seconds |
+| Aspect ratios | 16:9 and 9:16 — **not 1:1** |
+| Resolutions | 720p, 1080p |
+| Image-to-video | Accepts an image **URL** plus a motion prompt |
+| Safety filtering | Applies to **input images as well as generated output** |
+| Queue model | `submit()` → request id → status / result, plus webhooks |
+| Key handling | fal's docs recommend keeping `FAL_KEY` server-side and proxying |
+
+These are in `config/studio.php` under `video_models`. Correct them there and
+nowhere else.
+
+### Tier B — Third-party corroboration
+
+Search-indexed secondary pages, much of it SEO content written to rank for
+pricing queries. **No primary source in this tier was read directly** — the
+egress policy blocked every vendor and reference site attempted
+(`replicate.com`, `fal.ai`, `developer.puter.com`, `swychr.com`,
+`businessincameroon.com`). Tagged inline as:
 
 | Tag | Meaning |
 |---|---|
@@ -20,13 +50,35 @@ Every claim is therefore tagged:
 | **[Unconfirmed]** | Referenced but no figure found; treat as unknown |
 | **[Conflicting]** | Sources disagree materially — do not plan around either number |
 
-Prices for AI models moved monthly through 2026 and the PRD says so itself
-(§10: *"Prices and model capabilities change monthly. Re-verify before
-committing to any provider."*). **Confirm every number on the vendor's own
-billing page before funding anything.** This document is a starting shortlist,
-not a substitute for checking.
+Useful for shape and for comparison. Never load-bearing.
 
----
+### Tier C — Account facts, still unverified
+
+Only visible from inside the live fal account, and **not to be guessed**. These
+are marked `VERIFY_IN_DASHBOARD` in `config/studio.php` where they touch code:
+
+1. Current promotional / free-credit balance, and its expiry.
+2. Whether that credit is usable on the **specific models** we intend to call.
+3. **The Veo 3.1 Fast per-second rate** — not supplied, and currently set to the
+   Standard rate on purpose (see the over-estimate rule below). This is the
+   single number with the most leverage over cost in the whole system.
+4. Minimum top-up, and the payment methods the account is actually offered.
+5. Whether the intended card is accepted.
+6. Exact current model ids as shown in the dashboard.
+7. Account rate and concurrency limits.
+8. Whether billing exposes a per-request charge we can reconcile `actual_cost`
+   against, or only an account-level total.
+9. The webhook signature scheme, which decides whether webhooks can be trusted
+   at all (see `BUILD-PLAN.md` Step 6).
+
+**The over-estimate rule.** Where a price is unverified, config is set to the
+higher known rate. Over-estimating makes the budget cap refuse a run;
+under-estimating lets it overspend. Err toward refusing. `ModelCapabilities`
+throws rather than returning `0.0` for an unpriced resolution, for the same
+reason — a silent zero would let an unbounded run past the cap for free.
+
+Prices moved monthly through 2026 and the PRD says so itself (§10:
+*"Re-verify before committing to any provider."*).
 
 ## 1. The finding that should change your sequencing
 

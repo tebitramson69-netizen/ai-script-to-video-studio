@@ -101,6 +101,11 @@ Only once (3) succeeds does the next section become worth starting.
 
 ---
 
+> **Provider work now follows `docs/IMPLEMENTATION-PLAN.md`** (21 Sep 2026),
+> which supersedes the steps below for anything adapter-related. Decision: fal.ai
+> primary, Replicate the reversible fallback, architecture built before payment.
+> Steps 1–5 of that plan are already done.
+
 ## Next steps, in order
 
 ### Step 1 — Real video adapter (unblocks everything)

@@ -91,15 +91,15 @@ class PipelineRunner
     {
         $this->stateMachine->shotInvalidated($project, $shot);
 
-        if ($newPrompt !== null && trim($newPrompt) !== '') {
-            $shot->forceFill([
-                'prompt' => $newPrompt,
-
-                // A new prompt with the old seed would fight the change. A fresh
-                // seed is what the owner means by "try again".
-                'seed' => random_int(1, 2_000_000_000),
-            ])->save();
-        }
+        // Always a fresh seed, prompt change or not. Re-rolling the same seed
+        // through the same model returns the same clip, so an unedited
+        // "regenerate" would spend money to reproduce the shot the owner just
+        // rejected. It also keeps the generation fingerprint distinct, so the
+        // idempotency index reads this as new work rather than a duplicate.
+        $shot->forceFill([
+            'prompt' => ($newPrompt !== null && trim($newPrompt) !== '') ? $newPrompt : $shot->prompt,
+            'seed' => random_int(1, 2_000_000_000),
+        ])->save();
 
         $this->costs->assertCanSpend(
             $project,
