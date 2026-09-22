@@ -6,6 +6,18 @@ and the architectural work proceeds now rather than waiting on payment.
 
 ---
 
+> **Model decision revised, 22 Sep 2026.** The owner verified **Kling 2.5 Turbo
+> Pro** on a live fal account at **$0.07/s** — a third of Veo 3.1 Standard's
+> $0.20/s without audio, and comfortably inside the budget envelope the section
+> below argues for. It is registered as `kling-2-5-turbo-pro`.
+>
+> Two constraints come with it. Its clip ladder is **5 or 10 seconds only**, not
+> a range, so slack is coarse: 5.5 seconds of narration buys a 10-second clip.
+> And the verified endpoint is **text-to-video only**, so FR-6 character
+> references cannot be used on it at all — Kling's image-to-video endpoint is a
+> separate model id that still needs its own registry entry and its own verified
+> figures.
+
 ## Where this plan differs from the brief, and why
 
 Four changes. Each is a judgement call, so the reasoning is here to be argued

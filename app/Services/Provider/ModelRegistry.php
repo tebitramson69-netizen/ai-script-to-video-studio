@@ -4,6 +4,7 @@ namespace App\Services\Provider;
 
 use App\Contracts\Data\ModelCapabilities;
 use App\Enums\AspectRatio;
+use App\Enums\GenerationMode;
 use App\Models\Project;
 use InvalidArgumentException;
 
@@ -124,5 +125,50 @@ class ModelRegistry
     public function isCompatible(Project $project): bool
     {
         return $this->incompatibilityReason($project) === null;
+    }
+
+    /**
+     * Capability gaps that do not stop the render but quietly change what comes
+     * out of it.
+     *
+     * Distinct from incompatibilityReason(): those refuse the run, these let it
+     * proceed on terms the owner needs to have agreed to. The one that matters
+     * today is a text-to-video-only model — the pipeline degrades gracefully by
+     * dropping the character reference and rendering from the prompt alone,
+     * which is right for one odd shot and wrong for every shot in the video.
+     * Silent graceful degradation of the PRD's second goal, paid for at full
+     * price, is worse than a warning.
+     *
+     * @return list<string>
+     */
+    public function degradationWarnings(Project $project): array
+    {
+        $capabilities = $this->forProject($project);
+        $warnings = [];
+
+        $lockedCharacters = $project->characters()
+            ->whereNotNull('canonical_reference_asset_id')
+            ->count();
+
+        if ($lockedCharacters > 0 && ! $capabilities->supportsMode(GenerationMode::ImageToVideo)) {
+            $warnings[] = sprintf(
+                '%s is text-to-video only, so the %d locked character reference(s) cannot be '.
+                'used as a starting frame. Shots will render from their prompt alone and '.
+                'characters will not stay consistent between them (PRD G2, FR-6). '.
+                'Switch to an image-to-video model before rendering, or accept the drift.',
+                $capabilities->label,
+                $lockedCharacters,
+            );
+        }
+
+        if ($capabilities->emitsNativeAudio && ! $capabilities->supportsNativeAudioToggle) {
+            $warnings[] = sprintf(
+                '%s generates its own audio and offers no way to turn it off, so the clip '.
+                'is paid for with a soundtrack that assembly then discards (FR-14).',
+                $capabilities->label,
+            );
+        }
+
+        return $warnings;
     }
 }

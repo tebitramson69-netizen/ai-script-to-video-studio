@@ -8,32 +8,78 @@ Claims in this document fall into three classes. Keeping them apart is the whole
 point of the document — the worst failure mode here is a third-party blog price
 hardening into a config constant nobody re-checks.
 
-### Tier A — Official fal documentation, read by the project owner
+### Tier A — Read from a live fal.ai account by the project owner
 
-Read directly from fal's own model pages by Tebit Ramson Titih on **21 Sep
-2026**. This is the most reliable tier and the only one config values are taken
-from. It is **not** verified by this codebase: fal.ai is blocked by the build
-environment's egress policy, so I could not confirm any of it myself.
+The only primary-source evidence in this project. fal.ai is blocked by the
+build environment's egress policy, so none of it is verified by this codebase —
+but it outranks every third-party figure below, and it is what
+`config/studio.php` is built from.
+
+**Kling 2.5 Turbo Pro — read from the model page, 22 Sep 2026**
 
 | Fact | Value |
 |---|---|
-| Veo 3.1 standard endpoint | `fal-ai/veo3.1` |
-| Veo 3.1 fast endpoint | `fal-ai/veo3.1/fast` |
-| Price, 720p/1080p, no audio | **$0.20 / sec** |
-| Price, 720p/1080p, with audio | **$0.40 / sec** |
-| Price, 4K, no audio | **$0.40 / sec** |
-| Price, 4K, with audio | **$0.60 / sec** |
-| Explicit audio control | `generate_audio` parameter |
-| Clip duration | 5–8 seconds |
-| Aspect ratios | 16:9 and 9:16 — **not 1:1** |
-| Resolutions | 720p, 1080p |
-| Image-to-video | Accepts an image **URL** plus a motion prompt |
-| Safety filtering | Applies to **input images as well as generated output** |
-| Queue model | `submit()` → request id → status / result, plus webhooks |
-| Key handling | fal's docs recommend keeping `FAL_KEY` server-side and proxying |
+| Endpoint | `fal-ai/kling-video/v2.5-turbo/pro/text-to-video` |
+| Price | **$0.35 for 5 seconds**, then **$0.07 per additional second** — a flat $0.07/s |
+| Durations | **5 or 10 seconds only** — not a range |
+| Audio | **No `generate_audio` or equivalent in the schema.** Video-only. |
+| Conditioning | **Text-to-video only.** This endpoint takes no starting image. |
 
-These are in `config/studio.php` under `video_models`. Correct them there and
-nowhere else.
+**Account state, 22 Sep 2026**
+
+| Fact | Value |
+|---|---|
+| Credit balance | **$0.00** |
+| Requests made | 0 |
+| Payment method | none added |
+| Minimum top-up | **Not verified.** Public docs say no minimum spend, but paid Model API use requires prepaid credits. |
+
+**Veo 3.1 — read from fal's model pages, 21 Sep 2026**
+
+| Fact | Value |
+|---|---|
+| Endpoints | `fal-ai/veo3.1`, `fal-ai/veo3.1/fast` |
+| Price, 720p/1080p | $0.20/s without audio, $0.40/s with |
+| Price, 4K | $0.40/s without audio, $0.60/s with |
+| Audio control | `generate_audio` parameter |
+| Durations | 5–8 seconds |
+| Aspect ratios | 16:9 and 9:16 — **not 1:1** |
+| Image-to-video | accepts an image **URL** plus a motion prompt |
+| Safety filtering | applies to **input images as well as output** |
+
+### Three corrections this evidence forces
+
+**1. There is no free signup credit.** Tier B reported that new fal accounts
+receive free credits and that $20/$50 coupons circulate — enough, I argued, that
+Phase 1 might be completable before any payment. The live account shows
+**$0.00 and zero requests**. Whatever those articles described does not apply
+here. Payment is a real prerequisite again, not something that might be dodged.
+
+**2. "~$5 minimum" was never fal's number.** It is Replicate's prepaid minimum
+and was always labelled so, but it sat close enough to the fal discussion to be
+misread. **fal's minimum top-up is unverified.** Do not plan around $5.
+
+**3. Kling's real price beats every third-party estimate of it.** Tier B put
+Kling on fal anywhere between $0.029/s and $0.20/s — a 7× spread I refused to
+pick from. The measured figure is **$0.07/s**, which happens to match the
+corroborated Kling figure exactly, and is a third of Veo 3.1 Standard's $0.20/s
+without audio.
+
+### The consequence that matters most
+
+The verified endpoint is **text-to-video only**, and Phase 1's character
+consistency (PRD **G2**, FR-6) depends on feeding a locked reference image into
+every shot. On this endpoint that is impossible.
+
+The pipeline does not break — `RenderShotJob` degrades gracefully by dropping the
+reference and rendering from the prompt alone. That is correct for one odd shot
+and wrong for every shot in a video: characters drift, at full price, with
+nothing saying so. `ModelRegistry::degradationWarnings()` now surfaces it on the
+project page before anything is rendered.
+
+**Kling's image-to-video endpoint is a different model id and needs its own
+registry entry.** Getting FR-6 working on Kling means reading that endpoint's
+page too — its price, its durations, and how it takes the reference image.
 
 ### Tier B — Third-party corroboration
 
@@ -304,9 +350,9 @@ Three reasons, in order of weight:
 
 ### Keep Replicate as the fallback, and know your trigger
 
-Switch if **either** happens: fal's minimum top-up turns out to be high (its $5
-minimum is the firmest number in this research), or fal's payment page rejects
-your card and Replicate's does not. The architecture makes this a config change
+Switch if **either** happens: fal's minimum top-up turns out to be high (it is
+still unverified — the ~$5 figure in this document is Replicate's, not fal's), or
+fal's payment page rejects your card and Replicate's does not. The architecture makes this a config change
 plus one adapter class — that is the whole point of NFR-6, and it is why this
 decision is reversible and not worth agonising over.
 

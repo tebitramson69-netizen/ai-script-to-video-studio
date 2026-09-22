@@ -39,9 +39,11 @@ placeholder media, not real video.
 > **Provider comparison: see `docs/PROVIDER-RESEARCH.md`** (15 Sep 2026). It
 > evaluates fal.ai, Replicate, Google Vertex/Gemini and ElevenLabs against this
 > system's actual requirements, and recommends **starting with fal.ai**. It also
-> found that **both platforms give free signup credit without a card** — so
-> Phase 1 may be completable before any payment is needed. Read it before
-> funding anything.
+> **Superseded in part on 22 Sep 2026.** The live fal account shows **$0.00 and
+> zero requests**, so the third-party "free signup credit" finding below does not
+> apply — payment is a real prerequisite again. Kling 2.5 Turbo Pro is verified
+> at **$0.07/s** ($0.35 per 5s), and fal's minimum top-up is **unverified**: the
+> ~$5 figure in this document is Replicate's.
 
 ### Resolving D4: pick the aggregator in two stages, not one
 
@@ -86,9 +88,9 @@ entire reason the codebase is provider-agnostic.
    on this are Nigeria-focused, so confirm what actually works for **Cameroon**
    and for **recurring USD API charges** specifically, not just one-off
    e-commerce.
-2. **Fund the smallest top-up the provider allows** (Replicate's prepaid minimum
-   appears to be about $5 — confirm on their billing page). Do not fund more
-   until a charge has cleared.
+2. **Fund the smallest top-up fal allows.** That figure is unverified — the ~$5
+   in the table above is Replicate's, not fal's, so read it off fal's own
+   billing page. Do not fund more until a charge has cleared.
 3. **Make one real API call by hand** — curl, or the provider's playground —
    before writing a line of adapter code. You are testing the billing
    relationship, not the integration.

@@ -69,6 +69,7 @@ class ProjectController extends Controller
         CostEstimator $costs,
         ProjectStateMachine $stateMachine,
         RetentionManager $retention,
+        ModelRegistry $models,
     ): View {
         $this->authorize('view', $project);
 
@@ -92,6 +93,11 @@ class ProjectController extends Controller
             'storageUsed' => $retention->humanBytes($project->storageBytes()),
             'purgeable' => $retention->humanBytes($project->purgeableBytes()),
             'purgeBlockedReason' => $retention->purgeBlockedReason($project),
+
+            // Capability gaps that change what comes out without stopping the
+            // run. The owner needs to see these before paying for the render.
+            'degradationWarnings' => $models->degradationWarnings($project),
+            'videoModel' => $models->forProject($project),
         ]);
     }
 

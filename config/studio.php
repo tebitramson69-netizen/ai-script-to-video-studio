@@ -120,6 +120,49 @@ return [
         // Pricing and limits below were read from fal's own model pages by the
         // project owner on 21 Sep 2026. They are owner-verified, not verified by
         // this codebase — re-check before relying on them (PRD §10).
+        // Owner-verified against a live fal.ai account on 22 Sep 2026, read from
+        // the model page itself. This is the most reliable evidence in the
+        // project — it outranks every third-party figure in PROVIDER-RESEARCH.
+        'kling-2-5-turbo-pro' => [
+            'label' => 'Kling 2.5 Turbo Pro (fal)',
+            'endpoint' => env(
+                'STUDIO_KLING_ENDPOINT',
+                'fal-ai/kling-video/v2.5-turbo/pro/text-to-video',
+            ),
+
+            // Owner-verified: this endpoint is text-to-video ONLY. It cannot take
+            // a locked character reference as a starting frame, so FR-6 character
+            // consistency is not achievable on it — see ModelRegistry's
+            // degradation warnings. Kling's image-to-video endpoint is a separate
+            // model id and needs its own registry entry.
+            'modes' => ['text_to_video'],
+
+            // Owner-verified: 5 or 10 seconds only. NOT a 5-10 range — the
+            // timing engine must never ask for 6, 7, 8 or 9.
+            'clip_lengths' => [5, 10],
+
+            // VERIFY_IN_DASHBOARD: accepted resolutions were not confirmed.
+            // Pricing is flat per second, so this does not affect any estimate.
+            'resolutions' => ['720p', '1080p'],
+            'default_resolution' => '1080p',
+
+            // VERIFY_IN_DASHBOARD: only 16:9 and 9:16 are declared because they
+            // were not confirmed either, and an undeclared ratio is refused at
+            // project creation rather than failing after a paid render. Add 1:1
+            // if the model page lists it.
+            'aspect_ratios' => ['16:9', '9:16'],
+
+            // Owner-verified: the schema exposes no generate_audio or equivalent.
+            // Treat as video-only. The adapter must not send an audio parameter.
+            'supports_native_audio_toggle' => false,
+            'emits_native_audio' => false,
+
+            // Owner-verified: $0.35 for 5 seconds, and $0.07 for each additional
+            // second — a flat $0.07/s with no resolution or audio dimension, so
+            // the flat form is the honest one here.
+            'cost_per_second_usd' => 0.07,
+        ],
+
         'veo-3-1-fast' => [
             'label' => 'Veo 3.1 Fast (fal)',
             'endpoint' => env('STUDIO_VEO_FAST_ENDPOINT', 'fal-ai/veo3.1/fast'),

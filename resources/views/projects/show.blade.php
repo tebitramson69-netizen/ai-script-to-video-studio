@@ -15,7 +15,8 @@
                 {{ $project->aspect_ratio->value }} ·
                 {{ strtoupper($project->language) }} ·
                 {{ $project->scenes->count() }} scenes ·
-                {{ $project->shots->count() }} shots
+                {{ $project->shots->count() }} shots ·
+                <span title="Rendering model">{{ $videoModel->label }}</span>
             </p>
         </div>
         <form method="POST" action="{{ route('projects.destroy', $project) }}"
@@ -24,6 +25,15 @@
             <button class="btn danger" type="submit">Delete project</button>
         </form>
     </div>
+
+    {{-- Capability gaps: the render will succeed but produce something other
+         than what the PRD promises. Shown before the pipeline because the
+         decision they force is "should I pay for this at all?". --}}
+    @foreach ($degradationWarnings as $warning)
+        <div class="flash flash-budget">
+            <strong>Reduced output.</strong> {{ $warning }}
+        </div>
+    @endforeach
 
     {{-- ── Pipeline state (PRD §8) ─────────────────────────────────────── --}}
     <ol class="pipeline">
