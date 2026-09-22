@@ -13,6 +13,7 @@ use App\Models\Shot;
 use App\Services\Cost\CostEstimator;
 use App\Services\Pipeline\AssetRecorder;
 use App\Services\Pipeline\ProjectStateMachine;
+use App\Services\Provider\ModelRegistry;
 use App\Services\Provider\ShotSubmitter;
 use Throwable;
 
@@ -157,7 +158,7 @@ class RenderShotJob extends StudioJob
             return;
         }
 
-        if ($outcome->kind === 'previously_failed') {
+        if ($outcome->kind === 'collided' || $outcome->kind === 'previously_failed') {
             $shot->forceFill([
                 'status' => ShotStatus::Failed,
                 'error' => $outcome->message(),
@@ -175,7 +176,10 @@ class RenderShotJob extends StudioJob
     protected function buildClipRequest(Shot $shot, VideoGenerator $video): ClipRequest
     {
         $reference = $this->referenceImagePath($shot);
-        $capabilities = $video->capabilities();
+
+        // Same reasoning as planning: the project pinned a model, so that model
+        // decides what this request may ask for.
+        $capabilities = app(ModelRegistry::class)->forProject($shot->project);
 
         $mode = ClipRequest::modeFor($reference);
 
@@ -195,6 +199,7 @@ class RenderShotJob extends StudioJob
             resolution: $capabilities->defaultResolution,
             referenceImagePath: $reference,
             seed: $shot->seed,
+            modelKey: $capabilities->key,
 
             // FR-14: a narrated project must carry exactly one voice. On a model
             // with a native-audio toggle the adapter forwards this so the audio

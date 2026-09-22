@@ -2,7 +2,6 @@
 
 namespace App\Services\Pipeline;
 
-use App\Contracts\VideoGenerator;
 use App\Enums\ShotStatus;
 use App\Exceptions\BudgetExceededException;
 use App\Jobs\AssembleProjectJob;
@@ -17,6 +16,7 @@ use App\Models\Character;
 use App\Models\Project;
 use App\Models\Shot;
 use App\Services\Cost\CostEstimator;
+use App\Services\Provider\ModelRegistry;
 use Illuminate\Support\Facades\Bus;
 
 /**
@@ -103,7 +103,8 @@ class PipelineRunner
 
         $this->costs->assertCanSpend(
             $project,
-            (float) $shot->target_duration_seconds * app(VideoGenerator::class)->costPerSecondUsd(),
+            (float) $shot->target_duration_seconds
+                * app(ModelRegistry::class)->forProject($project)->costPerSecondUsd(),
             "Shot #{$shot->sequence}",
         );
 

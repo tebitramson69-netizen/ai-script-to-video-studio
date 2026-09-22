@@ -24,6 +24,15 @@ readonly class ClipRequest
         public array $referenceImagePaths = [],
         public ?int $seed = null,
         public bool $muteNativeAudio = true,
+
+        /**
+         * Registry key of the model to render on, e.g. 'veo-3-1-fast'.
+         *
+         * An aggregator hosts many models behind one credential, so the adapter
+         * cannot know which endpoint to call unless the request says. Null means
+         * "the driver's own default", which is all a single-model driver needs.
+         */
+        public ?string $modelKey = null,
     ) {}
 
     /**
@@ -41,6 +50,29 @@ readonly class ClipRequest
             $one !== null || count($many) === 1 => GenerationMode::ImageToVideo,
             default => GenerationMode::TextToVideo,
         };
+    }
+
+    /**
+     * The same request with a different seed.
+     *
+     * A new seed is what makes otherwise-identical work genuinely distinct —
+     * both to the model, which returns a different clip, and to the
+     * fingerprint, which stops treating it as a duplicate.
+     */
+    public function withSeed(int $seed): self
+    {
+        return new self(
+            prompt: $this->prompt,
+            durationSeconds: $this->durationSeconds,
+            aspectRatio: $this->aspectRatio,
+            mode: $this->mode,
+            resolution: $this->resolution,
+            referenceImagePath: $this->referenceImagePath,
+            referenceImagePaths: $this->referenceImagePaths,
+            seed: $seed,
+            muteNativeAudio: $this->muteNativeAudio,
+            modelKey: $this->modelKey,
+        );
     }
 
     /**

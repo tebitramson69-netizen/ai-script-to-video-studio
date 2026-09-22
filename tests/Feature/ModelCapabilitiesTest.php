@@ -165,8 +165,10 @@ class ModelCapabilitiesTest extends TestCase
             $cap * 0.6,
             $cleanRun,
             sprintf(
-                'Default model "%s" costs $%.2f for a 64s video against a $%.2f cap, '.
-                'leaving too little for regenerations. Pick a cheaper default or raise the cap.',
+                'Default model "%s" costs $%.2f for a 64s video against a $%.2f cap, leaving too '.
+                'little for regenerations. If this is veo-3-1-fast, its rate in config/studio.php '.
+                'is still the VERIFY_IN_DASHBOARD placeholder set to the Standard price — put the '.
+                'real Fast rate in. Otherwise pick a cheaper default or raise the cap.',
                 $key, $cleanRun, $cap,
             ),
         );

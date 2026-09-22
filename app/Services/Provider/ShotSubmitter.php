@@ -5,6 +5,7 @@ namespace App\Services\Provider;
 use App\Contracts\Data\ClipRequest;
 use App\Contracts\QueueableVideoGenerator;
 use App\Enums\ShotStatus;
+use App\Models\ProviderRequest;
 use App\Models\Shot;
 
 /**
@@ -25,8 +26,12 @@ class ShotSubmitter
     /**
      * @return SubmissionOutcome what happened, so the caller can tell the owner
      */
-    public function submit(Shot $shot, ClipRequest $request, QueueableVideoGenerator $video): SubmissionOutcome
-    {
+    public function submit(
+        Shot $shot,
+        ClipRequest $request,
+        QueueableVideoGenerator $video,
+        int $attempt = 0,
+    ): SubmissionOutcome {
         $project = $shot->project;
         $capabilities = $video->capabilities();
 
@@ -47,20 +52,22 @@ class ShotSubmitter
             payload: $this->redactedPayload($request),
         );
 
-        $claim->request->forceFill([
-            'subject_type' => $shot->getMorphClass(),
-            'subject_id' => $shot->getKey(),
-        ])->save();
-
         // Someone already owns this exact work.
         if (! $claim->isNew) {
+            // Whose work is it? A request carries exactly one subject, so a
+            // *different* shot adopting this one would leave the original with
+            // no result and no failure — stuck rendering forever.
+            if (! $this->belongsTo($claim->request, $shot)) {
+                return $this->resolveCollision($shot, $request, $video, $claim->request, $attempt);
+            }
+
             if ($claim->isAlreadyCompleted()) {
                 return SubmissionOutcome::alreadyCompleted($claim->request);
             }
 
             if ($claim->isDuplicateInFlight()) {
-                // Point the shot at the in-flight request rather than starting a
-                // second one; the poller will complete both from the one result.
+                // This same shot, asked for twice. Wait for the request that is
+                // already running rather than paying for a second one.
                 $shot->forceFill(['status' => ShotStatus::Rendering])->save();
 
                 return SubmissionOutcome::duplicateInFlight($claim->request);
@@ -71,6 +78,13 @@ class ShotSubmitter
             // retry needs different inputs, which is why regeneration reseeds.
             return SubmissionOutcome::previouslyFailed($claim->request);
         }
+
+        // Only a new claim records its subject. Overwriting it on a duplicate
+        // is what stranded the original shot.
+        $claim->request->forceFill([
+            'subject_type' => $shot->getMorphClass(),
+            'subject_id' => $shot->getKey(),
+        ])->save();
 
         $providerRequestId = $video->submitClip($request);
 
@@ -83,6 +97,37 @@ class ShotSubmitter
         ])->save();
 
         return SubmissionOutcome::submitted($claim->request);
+    }
+
+    /**
+     * Two genuinely different shots hashed to the same fingerprint.
+     *
+     * Reseed and try once: a new seed changes both the clip the model returns
+     * and the fingerprint, so the two shots stop competing for one request.
+     * Giving up silently would be the worst outcome — one shot would sit in
+     * "rendering" forever, blocking export with nothing to explain why.
+     */
+    protected function resolveCollision(
+        Shot $shot,
+        ClipRequest $request,
+        QueueableVideoGenerator $video,
+        ProviderRequest $existing,
+        int $attempt,
+    ): SubmissionOutcome {
+        if ($attempt > 0) {
+            return SubmissionOutcome::collided($existing);
+        }
+
+        $seed = random_int(1, 2_000_000_000);
+        $shot->forceFill(['seed' => $seed])->save();
+
+        return $this->submit($shot, $request->withSeed($seed), $video, attempt: 1);
+    }
+
+    protected function belongsTo(ProviderRequest $request, Shot $shot): bool
+    {
+        return $request->subject_type === $shot->getMorphClass()
+            && (int) $request->subject_id === $shot->getKey();
     }
 
     /**

@@ -2,7 +2,6 @@
 
 namespace App\Jobs;
 
-use App\Contracts\VideoGenerator;
 use App\Enums\ProjectStatus;
 use App\Enums\ShotStatus;
 use App\Models\Character;
@@ -20,14 +19,14 @@ use RuntimeException;
  * durations (FR-8, FR-16, FR-17).
  *
  * Costs nothing — it is pure planning. That is deliberate: the owner sees the
- * full shot list and its estimated price before a single clip is bought.
+ * full shot list and its estimated price before a single clip is bought, and
+ * this job needs no provider driver at all, only the model's declared limits.
  */
 class PlanShotsJob extends StudioJob
 {
     public function __construct(public int $projectId) {}
 
     public function handle(
-        VideoGenerator $video,
         ShotPlanner $planner,
         ProjectStateMachine $stateMachine,
     ): void {
@@ -45,10 +44,14 @@ class PlanShotsJob extends StudioJob
             throw new RuntimeException("Cannot plan shots: {$incompatibility}");
         }
 
-        $clipLengths = $video->supportedClipLengths();
+        // The project's pinned model decides the limits, not whichever driver
+        // happens to be bound. Planning against the driver would buy clip
+        // lengths the chosen model cannot render.
+        $capabilities = app(ModelRegistry::class)->forProject($project);
+        $clipLengths = $capabilities->clipLengths;
         $maxShots = (int) config('studio.limits.max_shots', 60);
 
-        DB::transaction(function () use ($project, $planner, $clipLengths, $video, $maxShots) {
+        DB::transaction(function () use ($project, $planner, $clipLengths, $capabilities, $maxShots) {
             // Planning replaces the shot list. Any rendered clips are detached
             // rather than deleted — the Asset rows survive, so nothing the owner
             // has already paid for is destroyed by a re-plan.
@@ -67,7 +70,7 @@ class PlanShotsJob extends StudioJob
                         'sequence' => $sequence++,
                         'prompt' => $this->buildPrompt($scene, $project),
                         'narration_segment' => $plan->narrationSegment,
-                        'model' => $video->modelName(),
+                        'model' => $capabilities->key,
                         'seed' => random_int(1, 2_000_000_000),
                         'target_duration_seconds' => $plan->targetDurationSeconds,
 

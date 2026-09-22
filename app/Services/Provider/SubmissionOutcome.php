@@ -39,6 +39,15 @@ readonly class SubmissionOutcome
         return new self($r, 'previously_failed');
     }
 
+    /**
+     * Different work that hashed to the same fingerprint, and reseeding did not
+     * separate them. Vanishingly unlikely, but it must not be silent.
+     */
+    public static function collided(ProviderRequest $r): self
+    {
+        return new self($r, 'collided');
+    }
+
     public function wasSubmitted(): bool
     {
         return $this->kind === 'submitted';
@@ -57,6 +66,7 @@ readonly class SubmissionOutcome
             'duplicate_in_flight' => 'An identical generation is already running; waiting for it instead of paying twice.',
             'already_completed' => 'An identical generation already succeeded; reusing its result.',
             'previously_failed' => 'This exact request failed before. Change the prompt or reseed before retrying.',
+            'collided' => 'This shot collided with another generation and could not be separated. Edit its prompt and regenerate.',
         };
     }
 }

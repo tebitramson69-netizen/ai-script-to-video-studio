@@ -8,6 +8,7 @@ use App\Contracts\Data\ModelCapabilities;
 use App\Contracts\ProviderException;
 use App\Contracts\VideoGenerator;
 use App\Services\Media\FfmpegRunner;
+use App\Services\Provider\ModelRegistry;
 use RuntimeException;
 
 /**
@@ -54,6 +55,7 @@ class FakeVideoGenerator implements VideoGenerator
                 'seed' => $seed,
                 'prompt' => $request->prompt,
                 'aspect_ratio' => $request->aspectRatio->value,
+                'model_key' => $request->modelKey ?? $this->capabilities()->key,
                 'mode' => $request->mode->value,
                 'resolution' => $request->resolution->value,
                 'used_reference_image' => $request->referenceImagePath !== null,
@@ -132,12 +134,29 @@ class FakeVideoGenerator implements VideoGenerator
     public function estimateCostUsd(ClipRequest $request): float
     {
         return round(
-            $request->durationSeconds * $this->capabilities()->costPerSecondUsd(
+            $request->durationSeconds * $this->capabilitiesFor($request)->costPerSecondUsd(
                 $request->resolution,
                 withAudio: ! $request->muteNativeAudio,
             ),
             6,
         );
+    }
+
+    /**
+     * Capabilities of the model this request names, falling back to the
+     * driver's own.
+     *
+     * The fake renders anything, but it must still price and report the model
+     * it was asked for — otherwise a project pinned to an expensive model is
+     * quietly costed at the fake's zero, and the budget cap protects nothing.
+     */
+    protected function capabilitiesFor(ClipRequest $request): ModelCapabilities
+    {
+        if ($request->modelKey === null) {
+            return $this->capabilities();
+        }
+
+        return app(ModelRegistry::class)->video($request->modelKey);
     }
 
     public function supportedClipLengths(): array

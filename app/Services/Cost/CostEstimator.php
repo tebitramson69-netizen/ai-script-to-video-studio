@@ -5,28 +5,32 @@ namespace App\Services\Cost;
 use App\Contracts\ImageGenerator;
 use App\Contracts\MusicGenerator;
 use App\Contracts\SpeechSynthesizer;
-use App\Contracts\VideoGenerator;
 use App\Enums\ShotStatus;
 use App\Exceptions\BudgetExceededException;
 use App\Models\Project;
+use App\Services\Provider\ModelRegistry;
 use App\Services\Timing\NarrationEstimator;
 
 /**
  * Estimates what a run will cost, and enforces the hard per-project cap
  * (FR-11, NFR-4).
  *
- * Estimates come from the *drivers*, not from a price table in this class — so a
- * model swap re-prices the estimate automatically, and the fake driver correctly
- * estimates $0.00.
+ * Prices come from the model registry (video) and from the bound drivers
+ * (image, speech, music) — never from a table in this class, so a model swap or
+ * a driver swap re-prices the estimate automatically.
+ *
+ * Note that this no longer depends on a video driver at all: a project can be
+ * planned and costed with no provider configured, which is what lets the owner
+ * see a price before deciding whether to pay for one.
  */
 class CostEstimator
 {
     public function __construct(
-        protected VideoGenerator $video,
         protected ImageGenerator $image,
         protected SpeechSynthesizer $speech,
         protected MusicGenerator $music,
         protected NarrationEstimator $estimator,
+        protected ModelRegistry $models,
     ) {}
 
     /**
@@ -46,8 +50,13 @@ class CostEstimator
             ->sum('target_duration_seconds');
 
         if ($shotSeconds > 0) {
+            // Priced against the model the project actually renders on. Using
+            // the bound driver's rate instead would cost a project pinned to an
+            // expensive model at whatever happens to be configured locally —
+            // and a zero-cost fake would wave an unaffordable run straight past
+            // the cap.
             $lineItems['Video clips ('.$this->formatSeconds($shotSeconds).')'] =
-                $shotSeconds * $this->video->costPerSecondUsd();
+                $shotSeconds * $this->models->forProject($project)->costPerSecondUsd();
         }
 
         $unlockedCharacters = $project->characters()->whereNull('canonical_reference_asset_id')->count();
