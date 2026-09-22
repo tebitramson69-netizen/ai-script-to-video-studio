@@ -233,14 +233,23 @@ Deleting an asset never erases spend: `usage_records.asset_id` is
 
 Stated plainly rather than left for you to discover:
 
-1. **No real provider adapters.** Blocked on PRD A1/A2. `docs/PROVIDERS.md` gives
-   the exact shape to implement. I did not write speculative fal.ai/ElevenLabs
-   HTTP clients, because an unverified request payload is worse than none.
-2. **Per-scene SFX (FR-13, Phase 2)** has an interface and a fake driver, but is
+1. **The fal video adapter is written but unproven.** `STUDIO_VIDEO_DRIVER=fal`
+   binds it, and it is covered by 36 tests against faked HTTP — but no call has
+   ever left this codebase, because the build environment's egress policy blocks
+   fal.ai. What is owner-verified (Kling renders 5 or 10 seconds, has no audio
+   toggle, is text-to-video only) is enforced in the payload builder. What is
+   not (fal's response field names, the request URL shape) lives in
+   `FalResponseMapper` alone, is pinned by `FalResponseMapperTest`, and is
+   written to tolerate being wrong — it finds the output by structure as well as
+   by name. Run `studio:capture-fal-shapes` against a funded account to replace
+   the assumption with a fixture.
+2. **No speech, music or SFX adapters.** Still blocked on PRD A1/A2 and a
+   provider decision. `docs/PROVIDERS.md` gives the shape to implement.
+3. **Per-scene SFX (FR-13, Phase 2)** has an interface and a fake driver, but is
    not placed on the assembly timeline.
-3. **No polling/websockets.** Queued stages update on page refresh. This starts
+4. **No polling/websockets.** Queued stages update on page refresh. This starts
    to matter once real renders take minutes rather than seconds.
-4. **The `"Ai"` Laravel project (PRD D1/A5) was never inspected** — it was not
+5. **The `"Ai"` Laravel project (PRD D1/A5) was never inspected** — it was not
    reachable from the environment this was built in. Nothing here assumes the
    shape of its `usage_records` table; this project defines its own. If you do
    want to merge the two, that reconciliation is still open.

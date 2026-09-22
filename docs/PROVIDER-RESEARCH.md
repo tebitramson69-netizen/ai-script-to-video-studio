@@ -409,9 +409,39 @@ Updated 22 Sep 2026. Steps 1 and 2 are done; what is left needs money.
    foreign-transaction fee. Those are part of the true cost per video and
    belong in the config constants.
 
-Step 5 is what unblocks `FalClient`. Steps 3 and 5 are independent — the
-payload shapes can be captured on the text-to-video endpoint and the adapter
-written, with image-to-video added afterwards as a second registry entry.
+### What changed on 22 Sep: the adapter was written anyway
+
+`FalClient`, `FalPayloadBuilder`, `FalResponseMapper` and `FalVideoGenerator`
+now exist, and `STUDIO_VIDEO_DRIVER=fal` binds them. That was not a decision to
+stop waiting for step 5 — it was a decision about *where* the unverified part
+should live.
+
+The reasoning, because it is the kind of call worth being able to re-examine:
+
+- The facts that are owner-verified are also the facts that cost money to get
+  wrong. Kling's 5-or-10-second ladder, its missing audio toggle, its
+  text-to-video-only mode: each of those is now refused **before** any HTTP call
+  and pinned by a test. None of that needed a captured payload, and every day it
+  did not exist was a day a bug in the timing engine could have bought a 4xx.
+- The facts that are *not* verified are all response-shape facts, and they are
+  now confined to one class, `FalResponseMapper`. Correcting them when the
+  capture arrives is a change to one file with one test file pinning it, not an
+  archaeology exercise across an adapter.
+- The mapper is written to tolerate being wrong. It looks for the output at
+  fal's documented path first, then falls back to finding any URL in the
+  response that looks like a video file. A renamed key degrades into a slower
+  lookup rather than a pipeline that cannot collect work it has already paid
+  for. The same applies to the request URL: fal's own `status_url` and
+  `response_url` are followed when the submit response carries them, and only a
+  cold cache falls back to a constructed URL — which tries both the full model
+  path and the two-segment form before giving up.
+
+So step 5 is still worth doing, and it is still the thing that turns an
+assumption into a fixture. What it no longer blocks is everything else.
+
+Steps 3 and 5 remain independent — the payload shapes can be captured on the
+text-to-video endpoint, with image-to-video added afterwards as a second
+registry entry.
 
 ---
 

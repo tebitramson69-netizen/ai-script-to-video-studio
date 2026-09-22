@@ -4,30 +4,38 @@ Every external capability is an interface in `app/Contracts/`. Going live means
 writing one adapter class per capability and changing one line of config.
 No pipeline code changes — that is the whole point of PRD NFR-6.
 
-Nothing in this repository contains a speculative HTTP client for fal.ai,
-Replicate or ElevenLabs. Their request and response shapes change, and a
-confidently-wrong payload is harder to debug than an unwritten one. **Check the
-provider's current docs, then implement against the interface below.**
+**The video capability is already done for fal.** `app/Integrations/Fal/` holds
+a working adapter — read it as the worked example rather than starting from the
+sketch below. Its unverified parts are confined to `FalResponseMapper` and
+explained in `docs/PROVIDER-RESEARCH.md` §8.
+
+Speech, music and sound effects still have no real adapter. Nothing here
+contains a speculative HTTP client for ElevenLabs or Replicate: their request
+and response shapes change, and a confidently-wrong payload is harder to debug
+than an unwritten one. **Check the provider's current docs, then implement
+against the interface below.**
 
 ---
 
 ## 1. Write the adapter
 
-Example shape for the video capability. The interface is the contract; the HTTP
-detail is yours to fill from the provider's docs.
+Example shape for the video capability, written against an imaginary provider
+so it does not collide with the real `App\Integrations\Fal` classes. The
+interface is the contract; the HTTP detail is yours to fill from the provider's
+docs.
 
 ```php
-namespace App\Integrations\Fal;
+namespace App\Integrations\Acme;
 
 use App\Contracts\Data\{ClipRequest, GeneratedMedia};
 use App\Contracts\{ProviderException, VideoGenerator};
 use Illuminate\Support\Facades\Http;
 
-class FalVideoGenerator implements VideoGenerator
+class AcmeVideoGenerator implements VideoGenerator
 {
     public function generateClip(ClipRequest $request): GeneratedMedia
     {
-        $response = Http::withToken(config('services.fal.key'))
+        $response = Http::withToken(config('studio.acme.key'))
             ->timeout(600)
             // Retry here is for connection-level blips only; the queue's
             // backoff (StudioJob) handles the slow, real failures.
@@ -43,19 +51,19 @@ class FalVideoGenerator implements VideoGenerator
 
         if ($response->status() === 429 || $response->serverError()) {
             // Retryable: the queue will back off and try again.
-            throw ProviderException::retryable("fal: {$response->status()}", 'fal');
+            throw ProviderException::retryable("acme: {$response->status()}", 'acme');
         }
 
         if ($response->failed()) {
             // Permanent: a rejected prompt fails identically four times, and on
             // a real provider each attempt may still be billed.
-            throw ProviderException::permanent("fal: {$response->body()}", 'fal');
+            throw ProviderException::permanent("acme: {$response->body()}", 'acme');
         }
 
         // Download the clip to a LOCAL TEMP PATH and return that path.
         // Do not write to storage and do not touch the database — AssetRecorder
         // owns both, which is what keeps drivers swappable and testable.
-        $path = tempnam(sys_get_temp_dir(), 'fal_').'.mp4';
+        $path = tempnam(sys_get_temp_dir(), 'acme_').'.mp4';
         file_put_contents($path, Http::get($response->json('video.url'))->body());
 
         // FR-14: if the model emits its own audio, strip it here (or set
@@ -86,7 +94,7 @@ class FalVideoGenerator implements VideoGenerator
     public function costPerSecondUsd(): float { return 0.10; }
     public function emitsNativeAudio(): bool  { return false; }
     public function modelName(): string       { return 'kling-3.0'; }
-    public function providerName(): string    { return 'fal'; }
+    public function providerName(): string    { return 'acme'; }
 }
 ```
 
@@ -98,7 +106,8 @@ class FalVideoGenerator implements VideoGenerator
 'drivers' => [
     'video_generator' => [
         'fake' => \App\Integrations\Fake\FakeVideoGenerator::class,
-        'fal'  => \App\Integrations\Fal\FalVideoGenerator::class,   // add
+        'fal'  => \App\Integrations\Fal\FalVideoGenerator::class,   // already there
+        'acme' => \App\Integrations\Acme\AcmeVideoGenerator::class,  // add
     ],
 ],
 
@@ -112,10 +121,11 @@ class FalVideoGenerator implements VideoGenerator
 ],
 ```
 
-`config/services.php`:
+Provider credentials live in `config/studio.php`, not `config/services.php` —
+everything this project needs from a provider is in one file:
 
 ```php
-'fal' => ['key' => env('FAL_KEY')],
+'acme' => ['key' => env('ACME_KEY')],
 ```
 
 ## 3. Switch it on

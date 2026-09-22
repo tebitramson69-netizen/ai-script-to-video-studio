@@ -7,6 +7,7 @@ use App\Integrations\Fake\FakeScriptStructurer;
 use App\Integrations\Fake\FakeSoundEffectGenerator;
 use App\Integrations\Fake\FakeSpeechSynthesizer;
 use App\Integrations\Fake\FakeVideoGenerator;
+use App\Integrations\Fal\FalVideoGenerator;
 
 /**
  * Every third-party capability the pipeline needs is named here and resolved
@@ -49,6 +50,11 @@ return [
             // submit -> poll -> collect lifecycle is exercised without a
             // provider account.
             'fake-queue' => FakeQueueableVideoGenerator::class,
+
+            // Real generation on any fal-hosted video model. Which model is
+            // decided per request from the project's pin, not by this line —
+            // one credential fronts them all.
+            'fal' => FalVideoGenerator::class,
         ],
         'speech_synthesizer' => [
             'fake' => FakeSpeechSynthesizer::class,
@@ -115,6 +121,7 @@ return [
             'supports_native_audio_toggle' => true,
             'emits_native_audio' => false,
             'cost_per_second_usd' => 0.0,
+            'payload_parameters' => ['aspect_ratio', 'resolution', 'seed'],
         ],
 
         // Pricing and limits below were read from fal's own model pages by the
@@ -161,6 +168,15 @@ return [
             // second — a flat $0.07/s with no resolution or audio dimension, so
             // the flat form is the honest one here.
             'cost_per_second_usd' => 0.07,
+
+            // What the adapter puts on the wire beyond prompt and duration.
+            // aspect_ratio is here because framing is a product requirement: a
+            // 16:9 render of a 9:16 project is unusable, so its default is not
+            // one worth accepting. resolution and seed are NOT here — their
+            // parameter names are unconfirmed on this model, and an unaccepted
+            // parameter fails the whole call. Add them once the API tab
+            // confirms them.
+            'payload_parameters' => ['aspect_ratio'],
         ],
 
         'veo-3-1-fast' => [
@@ -190,6 +206,8 @@ return [
                 '720p' => ['no_audio' => 0.20, 'audio' => 0.40],
                 '1080p' => ['no_audio' => 0.20, 'audio' => 0.40],
             ],
+
+            'payload_parameters' => ['aspect_ratio', 'resolution'],
         ],
 
         'veo-3-1' => [
@@ -209,6 +227,8 @@ return [
                 '1080p' => ['no_audio' => 0.20, 'audio' => 0.40],
                 '4k' => ['no_audio' => 0.40, 'audio' => 0.60],
             ],
+
+            'payload_parameters' => ['aspect_ratio', 'resolution'],
         ],
     ],
 
@@ -322,9 +342,8 @@ return [
     | fal endpoints
     |--------------------------------------------------------------------------
     |
-    | Used only by `studio:capture-fal-shapes`, the diagnostic that discovers
-    | fal's real request and response shapes. Nothing in the pipeline calls
-    | these yet.
+    | Used by the `fal` video driver and by `studio:capture-fal-shapes`, the
+    | diagnostic that records fal's real request and response shapes.
     |
     | UNVERIFIED: these follow fal's documented queue pattern but this codebase
     | has never reached fal.ai — it is blocked by the build environment's egress
@@ -336,6 +355,12 @@ return [
     'fal' => [
         'key' => env('FAL_KEY'),
         'queue_url' => env('FAL_QUEUE_URL', 'https://queue.fal.run'),
+
+        // Generous because a submit that times out client-side may still have
+        // been accepted — and paid for — server-side. Waiting longer is
+        // cheaper than resubmitting.
+        'timeout_seconds' => (int) env('FAL_TIMEOUT', 120),
+        'connect_timeout_seconds' => (int) env('FAL_CONNECT_TIMEOUT', 15),
     ],
 
     'ffmpeg' => [

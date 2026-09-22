@@ -40,6 +40,19 @@ readonly class ModelCapabilities
         public VideoResolution $defaultResolution,
         public bool $supportsNativeAudioToggle = false,
         public bool $emitsNativeAudio = false,
+
+        /**
+         * Optional request parameters this model is known to accept, e.g.
+         * ['aspect_ratio', 'resolution', 'seed'].
+         *
+         * Opt-in rather than opt-out because the two mistakes are not
+         * symmetrical: omitting a parameter the model would have accepted
+         * gives you its default, while sending one it does not accept gives
+         * you a 4xx that reads like a wrong URL.
+         *
+         * @var list<string>
+         */
+        public array $payloadParameters = [],
     ) {}
 
     /**
@@ -81,6 +94,10 @@ readonly class ModelCapabilities
             defaultResolution: $default,
             supportsNativeAudioToggle: (bool) ($config['supports_native_audio_toggle'] ?? false),
             emitsNativeAudio: (bool) ($config['emits_native_audio'] ?? false),
+            payloadParameters: array_values(array_map(
+                'strval',
+                $config['payload_parameters'] ?? ['aspect_ratio'],
+            )),
         );
     }
 
@@ -104,6 +121,14 @@ readonly class ModelCapabilities
         }
 
         return (float) ($withAudio ? $band['audio'] : $band['no_audio']);
+    }
+
+    /**
+     * Whether the adapter should put this optional parameter on the wire.
+     */
+    public function sendsParameter(string $name): bool
+    {
+        return in_array($name, $this->payloadParameters, true);
     }
 
     public function supportsMode(GenerationMode $mode): bool
