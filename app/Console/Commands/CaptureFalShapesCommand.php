@@ -2,10 +2,13 @@
 
 namespace App\Console\Commands;
 
+use App\Contracts\Data\ModelCapabilities;
+use App\Services\Provider\ModelRegistry;
 use Illuminate\Console\Command;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
+use InvalidArgumentException;
 
 /**
  * Discovers fal's real request and response shapes by making one small
@@ -22,12 +25,13 @@ use Illuminate\Support\Facades\Http;
 class CaptureFalShapesCommand extends Command
 {
     protected $signature = 'studio:capture-fal-shapes
-                            {--model=fal-ai/veo3.1/fast : Provider model id, exactly as the dashboard shows it}
+                            {--model=kling-2-5-turbo-pro : Registry key from config/studio.php video_models}
+                            {--endpoint= : Raw provider model id, overriding the registry}
                             {--prompt=A calm river at dawn, slow drifting mist : Prompt for the test clip}
-                            {--duration=5 : Clip length in seconds. Keep it at the model minimum.}
-                            {--resolution=720p : Output resolution}
-                            {--aspect=16:9 : Aspect ratio}
-                            {--audio : Generate native audio too. Leave off — it is the more expensive rate.}
+                            {--duration= : Clip length in seconds. Defaults to the model minimum, which is the cheapest probe.}
+                            {--resolution= : Send a resolution. Omitted by default — an unaccepted parameter can fail the call.}
+                            {--aspect= : Send an aspect ratio. Omitted by default, for the same reason.}
+                            {--audio : Ask for native audio. Ignored by models with no audio toggle.}
                             {--poll-interval=5 : Seconds between status checks}
                             {--max-polls=60 : Give up after this many checks}
                             {--dry-run : Print the request and exit without calling anything}
@@ -37,11 +41,40 @@ class CaptureFalShapesCommand extends Command
 
     protected string $outputDir;
 
+    protected ModelCapabilities $capabilities;
+
     public function handle(): int
     {
         $key = (string) config('studio.fal.key');
         $base = rtrim((string) config('studio.fal.queue_url'), '/');
-        $model = trim((string) $this->option('model'), '/');
+
+        try {
+            $this->capabilities = app(ModelRegistry::class)->video((string) $this->option('model'));
+        } catch (InvalidArgumentException $e) {
+            $this->components->error($e->getMessage());
+
+            return self::FAILURE;
+        }
+
+        $model = trim(
+            (string) ($this->option('endpoint') ?: $this->capabilities->endpoint),
+            '/',
+        );
+
+        if ($model === '') {
+            $this->components->error(
+                "Model '{$this->capabilities->key}' declares no endpoint. ".
+                'Add one to config/studio.php, or pass --endpoint.'
+            );
+
+            return self::FAILURE;
+        }
+
+        if (($durationError = $this->validateDuration()) !== null) {
+            $this->components->error($durationError);
+
+            return self::FAILURE;
+        }
 
         $this->outputDir = $this->option('out')
             ?: storage_path('app/private/fal-capture/'.now()->format('Ymd-His'));
@@ -73,13 +106,18 @@ class CaptureFalShapesCommand extends Command
             return self::FAILURE;
         }
 
-        $seconds = (float) $this->option('duration');
-        $rate = $this->option('audio') ? 0.40 : 0.20;
+        $seconds = $this->duration();
+        $rate = $this->capabilities->costPerSecondUsd(
+            withAudio: $this->capabilities->supportsNativeAudioToggle && $this->option('audio'),
+        );
 
         $this->components->warn(sprintf(
-            'This makes a real generation: about %.1fs at roughly $%.2f/s = ~$%.2f. '.
+            'This makes a real generation on %s: %s at $%.2f/s = ~$%.2f. '.
             'Indicative only — the invoice is the truth.',
-            $seconds, $rate, $seconds * $rate,
+            $this->capabilities->label,
+            rtrim(rtrim(number_format($seconds, 1), '0'), '.').'s',
+            $rate,
+            $seconds * $rate,
         ));
 
         if (! $this->confirm('Spend that and capture the shapes?', false)) {
@@ -175,17 +213,73 @@ class CaptureFalShapesCommand extends Command
      */
     protected function buildPayload(): array
     {
-        return [
+        // Deliberately minimal. The point of this command is to discover the
+        // response shape, and the likeliest way to fail at that is to send a
+        // parameter the model does not accept — which usually comes back as a
+        // 4xx that reads like a wrong URL rather than a wrong payload.
+        $payload = [
             'prompt' => (string) $this->option('prompt'),
-            'duration' => (int) $this->option('duration'),
-            'resolution' => (string) $this->option('resolution'),
-            'aspect_ratio' => (string) $this->option('aspect'),
-
-            // The parameter this whole exercise is really about: on Veo,
-            // turning audio off halves the documented rate, and every narrated
-            // project turns it off (FR-14).
-            'generate_audio' => (bool) $this->option('audio'),
+            'duration' => (int) $this->duration(),
         ];
+
+        // Kling 2.5 Turbo Pro exposes no audio toggle at all; Veo does, and
+        // turning it off halves Veo's rate (FR-14). Only send it where the
+        // model declares it.
+        if ($this->capabilities->supportsNativeAudioToggle) {
+            $payload['generate_audio'] = (bool) $this->option('audio');
+        } elseif ($this->option('audio')) {
+            $this->components->warn(
+                $this->capabilities->label.' has no audio toggle; --audio ignored.'
+            );
+        }
+
+        // Opt-in only: accepted values are unconfirmed for some models, and an
+        // unconfirmed parameter is exactly what a first probe should leave out.
+        if ($resolution = $this->option('resolution')) {
+            $payload['resolution'] = (string) $resolution;
+        }
+
+        if ($aspect = $this->option('aspect')) {
+            $payload['aspect_ratio'] = (string) $aspect;
+        }
+
+        return $payload;
+    }
+
+    /**
+     * The clip length to probe with: whatever was asked for, else the model's
+     * shortest, which is the cheapest question that still gets an answer.
+     */
+    protected function duration(): float
+    {
+        $requested = $this->option('duration');
+
+        return $requested === null || $requested === ''
+            ? $this->capabilities->minClipLengthSeconds()
+            : (float) $requested;
+    }
+
+    /**
+     * Refuse a duration the model cannot render.
+     *
+     * Kling accepts 5 or 10 seconds and nothing between, so asking for 7 buys
+     * an error rather than a clip — and this command exists precisely to avoid
+     * spending money on an avoidable failure.
+     */
+    protected function validateDuration(): ?string
+    {
+        $duration = $this->duration();
+
+        if (in_array($duration, $this->capabilities->clipLengths, true)) {
+            return null;
+        }
+
+        return sprintf(
+            '%s renders %s second clips only; %s was requested.',
+            $this->capabilities->label,
+            implode(' or ', array_map(fn ($l) => rtrim(rtrim(number_format($l, 1), '0'), '.'), $this->capabilities->clipLengths)),
+            rtrim(rtrim(number_format($duration, 1), '0'), '.'),
+        );
     }
 
     /**
