@@ -372,26 +372,46 @@ protection under the three we already have.
 
 ## 8. What to actually do next
 
-In this order. Each step is cheap and each one can fail safely.
+Updated 22 Sep 2026. Steps 1 and 2 are done; what is left needs money.
 
-1. **Create a fal.ai account.** Reportedly no card needed. **Read the free
-   credit balance off the billing page and tell me the number.** If it covers a
-   few dollars, the payment problem stops being a blocker to Phase 1 entirely.
-2. **While still on free credit**, read off the real figures and send them to me:
-   the **exact per-second price** of the video model you intend to use, its
-   **supported clip lengths**, whether it can be asked to **generate without
-   audio**, and the **minimum top-up**. Those four facts are what Step 1 of
-   `BUILD-PLAN.md` needs, and three of them go straight into `config/studio.php`.
-3. **Only then**, get the MTN MoMo virtual card and add it — with the smallest
-   possible top-up. Fund one video's worth, not a month's.
-4. **Make one real API call by hand** — curl or the playground — before I write
-   any adapter code. You are testing the billing relationship, not the
-   integration.
-5. **Read the invoice.** Confirm the charge, the FX rate and any foreign-
-   transaction fee. Those go into the config constants too.
+**Done**
 
-If step 1 shows a usable free balance, tell me and **I will start the adapter
-immediately** — you can defer the card until you actually need to scale.
+1. ~~Create a fal.ai account.~~ Created. **No free credit** — the balance is
+   $0.00 and there have been zero requests, which contradicts the third-party
+   reports that suggested Phase 1 might be finished before paying anything.
+2. ~~Read the model's real figures.~~ Done for **Kling 2.5 Turbo Pro**
+   text-to-video: $0.07/s, 5 or 10 second clips, no audio toggle, text-to-video
+   only. All four are in `config/studio.php` and pinned by `KlingModelTest`.
+
+**Next**
+
+3. **Read the Kling image-to-video model page.** Its own model id, price,
+   durations and how it takes the reference image. Without this, character
+   consistency (PRD G2, FR-6) cannot work at all — the verified endpoint takes
+   no starting image, and the pipeline will render every shot from its prompt
+   alone. The project page warns about this now, but a warning is not a fix.
+4. **Get a payment method that clears a USD charge from Cameroon.** The MTN
+   MoMo Mastercard virtual card is the best-sourced option (§3). Fund the
+   smallest top-up fal allows — that figure is still unverified, so read it off
+   their billing page rather than assuming the ~$5 quoted elsewhere in this
+   document, which is Replicate's.
+5. **Capture the queue payload shapes.**
+   `php artisan studio:capture-fal-shapes` makes one small real generation and
+   records the submit response, a status response caught mid-flight, and the
+   completed result. It reads the model's limits from the registry, so on Kling
+   it sends only `prompt` and `duration` — no `generate_audio`, which that
+   schema does not expose, and no resolution or aspect ratio, which are
+   unconfirmed. A rejected parameter comes back as a 4xx that reads like a
+   wrong URL, so the narrowest payload is the one most likely to answer the
+   question. `--dry-run` prints the exact request and costs nothing; the real
+   run asks before spending and redacts the key from everything it writes.
+6. **Read the invoice.** Confirm the charge, the FX rate and any
+   foreign-transaction fee. Those are part of the true cost per video and
+   belong in the config constants.
+
+Step 5 is what unblocks `FalClient`. Steps 3 and 5 are independent — the
+payload shapes can be captured on the text-to-video endpoint and the adapter
+written, with image-to-video added afterwards as a second registry entry.
 
 ---
 
