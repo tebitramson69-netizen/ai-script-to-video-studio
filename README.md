@@ -45,7 +45,9 @@ a rewrite.
 
 ## Requirements
 
-- PHP 8.2+ (developed on 8.4)
+- PHP 8.3+ — and `composer.json` pins `config.platform.php` to 8.3.0, so the
+  lockfile stays installable on 8.3 even when generated on a newer PHP. Remove
+  that pin only if you decide to drop 8.3 support.
 - Composer
 - MySQL 8 (or SQLite for local work)
 - **FFmpeg and FFprobe on PATH** — assembly will not work without them
