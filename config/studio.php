@@ -274,6 +274,27 @@ return [
 
     'disk' => env('STUDIO_DISK', 'local'),
 
+    /*
+    |--------------------------------------------------------------------------
+    | fal endpoints
+    |--------------------------------------------------------------------------
+    |
+    | Used only by `studio:capture-fal-shapes`, the diagnostic that discovers
+    | fal's real request and response shapes. Nothing in the pipeline calls
+    | these yet.
+    |
+    | UNVERIFIED: these follow fal's documented queue pattern but this codebase
+    | has never reached fal.ai — it is blocked by the build environment's egress
+    | policy. If the capture 404s, the correct URLs are on the model page's API
+    | tab; override them here or in .env rather than guessing again.
+    |
+    */
+
+    'fal' => [
+        'key' => env('FAL_KEY'),
+        'queue_url' => env('FAL_QUEUE_URL', 'https://queue.fal.run'),
+    ],
+
     'ffmpeg' => [
         'binary' => env('FFMPEG_BINARY', 'ffmpeg'),
         'probe_binary' => env('FFPROBE_BINARY', 'ffprobe'),
