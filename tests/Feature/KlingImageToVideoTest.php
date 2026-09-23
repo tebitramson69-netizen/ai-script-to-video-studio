@@ -149,7 +149,7 @@ class KlingImageToVideoTest extends TestCase
         // Concrete count, before anything is spent — rather than arriving later
         // as two failed shots.
         $this->assertNotEmpty($warnings);
-        $this->assertStringContainsString('2 shot(s) have no locked character', implode(' ', $warnings));
+        $this->assertStringContainsString('2 shot(s) with no locked character reference cannot be rendered', implode(' ', $warnings));
     }
 
     public function test_the_render_job_refuses_rather_than_rewriting_the_request(): void
@@ -204,7 +204,7 @@ class KlingImageToVideoTest extends TestCase
 
         // Still unrenderable: attached, but the reference is not locked.
         $this->assertStringContainsString(
-            '1 shot(s) have no locked character',
+            '1 shot(s) with no locked character reference cannot be rendered',
             implode(' ', app(ModelRegistry::class)->degradationWarnings($project)),
         );
     }

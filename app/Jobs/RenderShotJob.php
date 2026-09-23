@@ -179,9 +179,11 @@ class RenderShotJob extends StudioJob
     {
         $reference = $this->referenceImagePath($shot);
 
-        // Same reasoning as planning: the project pinned a model, so that model
-        // decides what this request may ask for.
-        $capabilities = app(ModelRegistry::class)->forProject($shot->project);
+        // The model this shot was PLANNED on, not the project's primary. With
+        // per-shot selection the two differ by design, and the planned model is
+        // the one whose clip-length ladder produced this shot's duration —
+        // rendering on any other could ask for a length it cannot produce.
+        $capabilities = app(ModelRegistry::class)->forShot($shot);
 
         $mode = ClipRequest::modeFor($reference);
 

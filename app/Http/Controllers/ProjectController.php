@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\AspectRatio;
 use App\Enums\AssetType;
+use App\Enums\GenerationMode;
 use App\Enums\ProjectStatus;
 use App\Http\Requests\StoreProjectRequest;
 use App\Models\Asset;
@@ -32,7 +34,28 @@ class ProjectController extends Controller
 
         return view('projects.create', [
             'videoModel' => $videoModel,
+            'videoModels' => $models->allVideo(),
+
+            // Filtered server-side for the model the form opens on, so the
+            // page is correct with scripting off — offering a ratio that
+            // cannot be rendered is the bug this guards against.
             'aspectRatios' => $models->aspectRatiosFor($videoModel),
+
+            // Every ratio, for the browser to re-narrow from when the model
+            // changes. It cannot widen back from the filtered list alone.
+            'allAspectRatios' => collect(AspectRatio::cases())
+                ->map(fn (AspectRatio $r) => ['value' => $r->value, 'label' => $r->label()]),
+
+            // Which ratios each model supports, for that narrowing.
+            'ratiosByModel' => collect($models->allVideo())->map(
+                fn ($m) => array_map(fn (AspectRatio $r) => $r->value, $models->aspectRatiosFor($m)),
+            ),
+
+            // Only models that can start from a reference image are offerable
+            // as companions (FR-6).
+            'imageCapableKeys' => collect($models->allVideo())
+                ->filter(fn ($m) => $m->supportsMode(GenerationMode::ImageToVideo))
+                ->keys(),
         ]);
     }
 
@@ -49,10 +72,15 @@ class ProjectController extends Controller
             'status' => ProjectStatus::Draft,
             'language' => 'en',
 
-            // Pinned at creation. The aspect ratio was validated against this
-            // model, so letting the global default drift later would silently
+            // Pinned at creation. The aspect ratio was validated against these
+            // models, so letting the global default drift later would silently
             // invalidate that check.
-            'video_model' => $models->defaultVideo()->key,
+            'video_model' => $request->primaryModelKey(),
+
+            // Optional companion for shots with a locked character reference.
+            // Null keeps the single-model behaviour this project had before
+            // per-shot selection existed.
+            'video_model_i2v' => $request->companionModelKey(),
         ]);
 
         // Parsing is free and instant, so there is no reason to make the owner
@@ -78,6 +106,11 @@ class ProjectController extends Controller
             'characters.canonicalReference',
             'shots.asset',
             'shots.scene',
+
+            // Needed by forShot(): resolving a shot's model asks whether it has
+            // a locked reference, and without this that is a query per shot.
+            'shots.characters',
+
             'finalAsset',
         ]);
 
@@ -98,6 +131,15 @@ class ProjectController extends Controller
             // run. The owner needs to see these before paying for the render.
             'degradationWarnings' => $models->degradationWarnings($project),
             'videoModel' => $models->forProject($project),
+
+            // Null unless a companion is doing something. The header shows the
+            // pair only when there is a pair worth showing.
+            'imageVideoModel' => $models->imageModelForProject($project),
+
+            // Per shot, so the owner can see which model rendered — or will
+            // render — each clip, and why two rates appear in the estimate.
+            'shotModels' => $project->shots
+                ->mapWithKeys(fn ($shot) => [$shot->id => $models->forShot($shot)->label]),
         ]);
     }
 

@@ -17,6 +17,13 @@
                 {{ $project->scenes->count() }} scenes ·
                 {{ $project->shots->count() }} shots ·
                 <span title="Rendering model">{{ $videoModel->label }}</span>
+                @if ($imageVideoModel)
+                    {{-- FR-6: character shots render on the companion so faces
+                         stay consistent between cuts. --}}
+                    · <span title="Model for shots with a locked character reference">
+                        + {{ $imageVideoModel->label }} for character shots
+                    </span>
+                @endif
             </p>
         </div>
         <form method="POST" action="{{ route('projects.destroy', $project) }}"

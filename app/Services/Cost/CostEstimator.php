@@ -2,6 +2,7 @@
 
 namespace App\Services\Cost;
 
+use App\Contracts\Data\ModelCapabilities;
 use App\Contracts\ImageGenerator;
 use App\Contracts\MusicGenerator;
 use App\Contracts\SpeechSynthesizer;
@@ -42,21 +43,38 @@ class CostEstimator
     {
         $lineItems = [];
 
-        $shotSeconds = (float) $project->shots()
+        // Grouped by the model each shot was planned on, because with per-shot
+        // selection a project can carry two rates at once. Pricing the whole
+        // run at the primary's rate would understate a project whose character
+        // shots render on a more expensive image-to-video model — and an
+        // understated estimate is one the cap waves through.
+        //
+        // Using the bound driver's rate instead of the planned model's would be
+        // worse again: a zero-cost local fake would wave an unaffordable run
+        // straight past the cap.
+        $pending = $project->shots()
             ->whereIn('status', [
                 ...ShotStatus::needingRenderValues(),
                 ShotStatus::Queued->value,
             ])
-            ->sum('target_duration_seconds');
+            ->selectRaw('model, sum(target_duration_seconds) as seconds')
+            ->groupBy('model')
+            ->pluck('seconds', 'model');
 
-        if ($shotSeconds > 0) {
-            // Priced against the model the project actually renders on. Using
-            // the bound driver's rate instead would cost a project pinned to an
-            // expensive model at whatever happens to be configured locally —
-            // and a zero-cost fake would wave an unaffordable run straight past
-            // the cap.
-            $lineItems['Video clips ('.$this->formatSeconds($shotSeconds).')'] =
-                $shotSeconds * $this->models->forProject($project)->costPerSecondUsd();
+        foreach ($pending as $modelKey => $seconds) {
+            $seconds = (float) $seconds;
+
+            if ($seconds <= 0) {
+                continue;
+            }
+
+            $capabilities = $this->capabilitiesFor($project, (string) $modelKey);
+
+            $label = $pending->count() > 1
+                ? sprintf('Video clips on %s (%s)', $capabilities->label, $this->formatSeconds($seconds))
+                : 'Video clips ('.$this->formatSeconds($seconds).')';
+
+            $lineItems[$label] = $seconds * $capabilities->costPerSecondUsd();
         }
 
         $unlockedCharacters = $project->characters()->whereNull('canonical_reference_asset_id')->count();
@@ -149,6 +167,28 @@ class CostEstimator
         }
 
         return $this->estimator->estimateSeconds($this->narrationText($project));
+    }
+
+    /**
+     * Capabilities for a model key read off a shot row.
+     *
+     * Falls back to the project's primary rather than throwing: the owner is
+     * only looking at a cost preview here, and the render path resolves
+     * properly and refuses there if it must.
+     */
+    protected function capabilitiesFor(Project $project, string $modelKey): ModelCapabilities
+    {
+        // Same rule as ModelRegistry::forShot(): a key that is not one of the
+        // project's chosen models is a stale row, not a third model. Pricing it
+        // at face value would let a shot carrying 'fake' be costed at zero on a
+        // project pinned to something expensive.
+        foreach ($this->models->modelsForProject($project) as $candidate) {
+            if ($candidate->key === $modelKey) {
+                return $candidate;
+            }
+        }
+
+        return $this->models->forProject($project);
     }
 
     protected function formatSeconds(float $seconds): string

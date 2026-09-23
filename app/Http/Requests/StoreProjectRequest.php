@@ -26,16 +26,35 @@ class StoreProjectRequest extends FormRequest
             // FR-2: aspect ratio is a creation-time decision and cannot change
             // once shots exist, so it is validated here and never in an update.
             //
-            // Restricted to what the rendering model can actually produce —
+            // Restricted to what the chosen models can actually produce —
             // Veo 3.1, for instance, has no 1:1. Catching it here costs nothing;
             // catching it at render time costs a paid clip.
+            //
+            // Validated against the INTERSECTION when a companion is chosen: a
+            // ratio only one of the pair can render would fail halfway through
+            // a paid run.
             'aspect_ratio' => [
                 'required',
                 Rule::enum(AspectRatio::class),
                 Rule::in(array_map(
                     fn (AspectRatio $r) => $r->value,
-                    app(ModelRegistry::class)->aspectRatiosFor(),
+                    $this->allowedAspectRatios(),
                 )),
+            ],
+
+            // Both default to the configured model when omitted, so a form
+            // that never asks behaves exactly as it did before per-shot
+            // selection existed.
+            'video_model' => [
+                'nullable', 'string',
+                Rule::in(app(ModelRegistry::class)->availableKeys()),
+            ],
+
+            // The companion for shots with a locked character reference
+            // (FR-6). Null means one model renders everything.
+            'video_model_i2v' => [
+                'nullable', 'string',
+                Rule::in(app(ModelRegistry::class)->availableKeys()),
             ],
 
             'budget_cap_usd' => [
@@ -54,6 +73,61 @@ class StoreProjectRequest extends FormRequest
                 'max:'.config('studio.limits.max_upload_kilobytes', 512),
             ],
         ];
+    }
+
+    /**
+     * The model this project will render most shots on.
+     */
+    public function primaryModelKey(): string
+    {
+        return $this->input('video_model')
+            ?: app(ModelRegistry::class)->defaultVideo()->key;
+    }
+
+    /**
+     * The companion model, or null for single-model behaviour.
+     */
+    public function companionModelKey(): ?string
+    {
+        $key = trim((string) $this->input('video_model_i2v'));
+
+        // Choosing the same model twice is not a pairing, it is the default
+        // dressed up — and storing it would make every later "is a companion
+        // set?" check answer yes misleadingly.
+        return $key === '' || $key === $this->primaryModelKey() ? null : $key;
+    }
+
+    /**
+     * Ratios every model this project may use can produce.
+     *
+     * @return list<AspectRatio>
+     */
+    public function allowedAspectRatios(): array
+    {
+        $registry = app(ModelRegistry::class);
+        $keys = array_filter([$this->primaryModelKey(), $this->companionModelKey()]);
+        $available = $registry->availableKeys();
+
+        $ratios = null;
+
+        foreach ($keys as $key) {
+            if (! in_array($key, $available, true)) {
+                continue;
+            }
+
+            $supported = $registry->aspectRatiosFor($registry->video($key));
+
+            // Intersected by value, not with array_intersect(), which
+            // stringifies its arguments and cannot take a backed enum.
+            $ratios = $ratios === null
+                ? $supported
+                : array_values(array_filter(
+                    $ratios,
+                    fn (AspectRatio $r) => in_array($r, $supported, true),
+                ));
+        }
+
+        return $ratios ?? $registry->aspectRatiosFor();
     }
 
     public function after(): array

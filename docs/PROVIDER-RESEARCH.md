@@ -409,12 +409,12 @@ Updated 22 Sep 2026. Steps 1 and 2 are done; what is left needs money.
    that may well be affordable. That is the correct direction to be wrong in,
    and one number fixes it.
 
-   Note also: the entry declares **image-to-video only**. Shots with no locked
-   character cannot render on it, which `ModelRegistry::degradationWarnings()`
-   now counts and reports on the project page before anything is spent. Pinning
-   a whole project to it is therefore only right when every shot has a locked
-   character. Per-shot model selection — text-to-video for uncharactered shots,
-   image-to-video for the rest — is the real answer and is not built.
+   Note also: the entry declares **image-to-video only**, so it is meant to be
+   used as a *companion* rather than a project's only model. A project now pins
+   a primary and an optional companion, and each shot renders on whichever one
+   suits it — so this entry handles the character shots while a text-to-video
+   model handles the establishing ones. Choosing it alone still works and still
+   warns, because shots with no locked character cannot render on it.
 4. **Get a payment method that clears a USD charge from Cameroon.** The MTN
    MoMo Mastercard virtual card is the best-sourced option (§3). Fund the
    smallest top-up fal allows — that figure is still unverified, so read it off

@@ -18,7 +18,7 @@ class Project extends Model
 
     protected $fillable = [
         'user_id', 'title', 'script', 'aspect_ratio', 'status', 'language',
-        'voice_id', 'video_model', 'music_mood', 'budget_cap_usd',
+        'voice_id', 'video_model', 'video_model_i2v', 'music_mood', 'budget_cap_usd',
         'final_asset_id', 'exported_at',
     ];
 

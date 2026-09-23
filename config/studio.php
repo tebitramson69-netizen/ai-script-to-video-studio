@@ -194,9 +194,10 @@ return [
         // and is NOT billed. A wrong price is billed. So the endpoint is a
         // structural guess and the price is an over-estimate.
         'kling-2-5-turbo-pro-i2v' => [
-            // The label reaches the project-creation dropdown, so the owner
-            // sees the caveat at the moment they choose. Drop 'UNVERIFIED'
-            // only when the four markers below are gone.
+            // The label is what the owner reads in the model selector when
+            // creating a project, so the caveat reaches them at the moment
+            // they choose. Drop 'UNVERIFIED' only when the four markers below
+            // are gone.
             'label' => 'Kling 2.5 Turbo Pro — Image to Video (fal, UNVERIFIED)',
 
             // VERIFY_IN_DASHBOARD (1/4): derived by substituting the last

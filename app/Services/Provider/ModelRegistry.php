@@ -6,6 +6,7 @@ use App\Contracts\Data\ModelCapabilities;
 use App\Enums\AspectRatio;
 use App\Enums\GenerationMode;
 use App\Models\Project;
+use App\Models\Shot;
 use InvalidArgumentException;
 
 /**
@@ -49,6 +50,120 @@ class ModelRegistry
     public function forProject(Project $project): ModelCapabilities
     {
         return $this->video($project->video_model ?: (string) config('studio.default_video_model', 'fake'));
+    }
+
+    /**
+     * The companion model for shots that have a locked character reference,
+     * when the project has chosen one.
+     *
+     * Null means one model renders everything — which is the behaviour this
+     * system had before per-shot selection existed, and remains the default.
+     */
+    public function imageModelForProject(Project $project): ?ModelCapabilities
+    {
+        $key = trim((string) $project->video_model_i2v);
+
+        if ($key === '') {
+            return null;
+        }
+
+        $capabilities = $this->video($key);
+
+        // A companion that cannot do image-to-video is not a companion. Rather
+        // than fail the render, fall back to the primary: the owner gets the
+        // single-model behaviour they had before, and degradationWarnings()
+        // tells them the pairing is not doing anything.
+        return $capabilities->supportsMode(GenerationMode::ImageToVideo)
+            ? $capabilities
+            : null;
+    }
+
+    /**
+     * Which model renders a shot, given whether it has a reference to start from.
+     *
+     * This is the whole of per-shot selection. A script contains establishing
+     * shots and character shots, and no single model serves both: an
+     * image-to-video endpoint cannot render an empty street, and a
+     * text-to-video one cannot hold a character's face between cuts. Choosing
+     * per shot is what lets one project do both.
+     *
+     * The fallbacks are deliberate and both err toward rendering rather than
+     * failing: a referenced shot with no companion configured renders on the
+     * primary (losing consistency, which degradationWarnings() reports), and an
+     * unreferenced shot renders on whichever of the two can do text-to-video.
+     */
+    public function resolveForShot(Project $project, bool $hasLockedReference): ModelCapabilities
+    {
+        $primary = $this->forProject($project);
+        $companion = $this->imageModelForProject($project);
+
+        if ($hasLockedReference) {
+            // Prefer whichever can actually use the reference. If the primary
+            // already does image-to-video there is nothing to switch to.
+            if ($primary->supportsMode(GenerationMode::ImageToVideo)) {
+                return $primary;
+            }
+
+            return $companion ?? $primary;
+        }
+
+        if ($primary->supportsMode(GenerationMode::TextToVideo)) {
+            return $primary;
+        }
+
+        // The primary is image-to-video only and this shot has nothing to start
+        // from. The companion is the last chance; if it cannot do
+        // text-to-video either, return the primary so the refusal names the
+        // model the owner actually chose.
+        return $companion !== null && $companion->supportsMode(GenerationMode::TextToVideo)
+            ? $companion
+            : $primary;
+    }
+
+    /**
+     * The model a shot was planned on.
+     *
+     * Read from the shot rather than re-resolved, so a clip is always costed
+     * and rendered against the model the timing engine planned its duration
+     * for. Re-resolving here would let a shot planned at 8 seconds be rendered
+     * by a model whose ladder is 5 or 10 (NFR-5 reproducibility).
+     */
+    public function forShot(Shot $shot): ModelCapabilities
+    {
+        $key = trim((string) $shot->model);
+
+        // Authoritative only if it is one of the models this project chose.
+        //
+        // Anything else is a stale row, not a third model: a shot planned
+        // before the pin changed, or seeded by a factory. Honouring it would
+        // let a project pinned to an expensive model be costed at whatever key
+        // happens to sit in that column — and a zero-cost 'fake' would wave an
+        // unaffordable run straight past the budget cap (FR-11, NFR-4).
+        foreach ($this->modelsForProject($shot->project) as $candidate) {
+            if ($candidate->key === $key) {
+                return $candidate;
+            }
+        }
+
+        return $this->resolveForShot($shot->project, $shot->hasLockedReference());
+    }
+
+    /**
+     * Every model this project may render on — one or two.
+     *
+     * Compatibility checks run over all of them, because a ratio the companion
+     * cannot produce fails just as hard as one the primary cannot.
+     *
+     * @return list<ModelCapabilities>
+     */
+    public function modelsForProject(Project $project): array
+    {
+        $companion = $this->imageModelForProject($project);
+        $primary = $this->forProject($project);
+
+        return $companion === null || $companion->key === $primary->key
+            ? [$primary]
+            : [$primary, $companion];
     }
 
     /**
@@ -102,9 +217,14 @@ class ModelRegistry
      */
     public function incompatibilityReason(Project $project): ?string
     {
-        $capabilities = $this->forProject($project);
+        // Every model the project may render on, not just the primary. A ratio
+        // the companion cannot produce fails just as hard, and it would fail
+        // halfway through a paid run rather than before it.
+        foreach ($this->modelsForProject($project) as $capabilities) {
+            if ($capabilities->supportsAspectRatio($project->aspect_ratio)) {
+                continue;
+            }
 
-        if (! $capabilities->supportsAspectRatio($project->aspect_ratio)) {
             $supported = implode(', ', array_map(
                 fn (AspectRatio $r) => $r->value,
                 $this->aspectRatiosFor($capabilities),
@@ -144,13 +264,24 @@ class ModelRegistry
     public function degradationWarnings(Project $project): array
     {
         $capabilities = $this->forProject($project);
+        $models = $this->modelsForProject($project);
         $warnings = [];
+
+        $canDo = fn (GenerationMode $mode) => array_reduce(
+            $models,
+            fn (bool $carry, ModelCapabilities $m) => $carry || $m->supportsMode($mode),
+            false,
+        );
 
         $lockedCharacters = $project->characters()
             ->whereNotNull('canonical_reference_asset_id')
             ->count();
 
-        if ($lockedCharacters > 0 && ! $capabilities->supportsMode(GenerationMode::ImageToVideo)) {
+        // Asked of the pair, not the primary. A text-to-video primary with an
+        // image-to-video companion covers this case completely, and warning
+        // about it anyway would train the owner to ignore the warnings that
+        // still mean something.
+        if ($lockedCharacters > 0 && ! $canDo(GenerationMode::ImageToVideo)) {
             $warnings[] = sprintf(
                 '%s is text-to-video only, so the %d locked character reference(s) cannot be '.
                 'used as a starting frame. Shots will render from their prompt alone and '.
@@ -166,21 +297,35 @@ class ModelRegistry
         // cannot render an uncharactered shot at all. Counted here so the number
         // is concrete before anything is spent, rather than arriving later as N
         // failed shots.
-        if (! $capabilities->supportsMode(GenerationMode::TextToVideo)) {
+        if (! $canDo(GenerationMode::TextToVideo)) {
             $unrenderable = $project->shots()
                 ->whereDoesntHave('characters', fn ($q) => $q->whereNotNull('canonical_reference_asset_id'))
                 ->count();
 
             if ($unrenderable > 0) {
                 $warnings[] = sprintf(
-                    '%s is image-to-video only, and %d shot(s) have no locked character '.
-                    'reference to start from. Those shots cannot be rendered on this model. '.
-                    'Lock a character onto them, or pin the project to a model that also '.
-                    'does text-to-video.',
+                    '%s is image-to-video only and no text-to-video companion is set, so '.
+                    'the %d shot(s) with no locked character reference cannot be rendered. '.
+                    'Lock a character onto them, or choose a companion model that does '.
+                    'text-to-video.',
                     $capabilities->label,
                     $unrenderable,
                 );
             }
+        }
+
+        // A companion that cannot do image-to-video was silently ignored by
+        // imageModelForProject(). Saying so beats leaving the owner believing
+        // their character shots are being handled.
+        $chosenCompanion = trim((string) $project->video_model_i2v);
+
+        if ($chosenCompanion !== '' && $this->imageModelForProject($project) === null) {
+            $warnings[] = sprintf(
+                'The companion model "%s" cannot do image-to-video, so it is being ignored '.
+                'and every shot renders on %s.',
+                $chosenCompanion,
+                $capabilities->label,
+            );
         }
 
         if ($capabilities->emitsNativeAudio && ! $capabilities->supportsNativeAudioToggle) {

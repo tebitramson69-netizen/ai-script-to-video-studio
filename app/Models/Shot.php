@@ -55,6 +55,20 @@ class Shot extends Model
     }
 
     /**
+     * Whether this shot has a character reference to start an image-to-video
+     * render from (FR-6).
+     *
+     * Attached-but-unlocked is the same as absent: a character with no
+     * canonical reference has no frame to hand the model. This is what decides
+     * which model renders the shot, so the distinction has to be exact.
+     */
+    public function hasLockedReference(): bool
+    {
+        return $this->characters
+            ->contains(fn (Character $character) => $character->canonical_reference_asset_id !== null);
+    }
+
+    /**
      * How long this shot occupies in the final timeline. Narration is the master
      * clock (FR-16), so the clip is trimmed or held to it (FR-18); we fall back
      * to the target length only if narration duration is not yet known.

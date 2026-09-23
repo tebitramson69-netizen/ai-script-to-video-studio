@@ -135,6 +135,26 @@ first, and never run the spending version without asking.
 
 ---
 
+## A project renders on one or two models
+
+`projects.video_model` is the primary; `projects.video_model_i2v` is an
+optional companion for shots that have a locked character reference. Null
+companion means one model renders everything, which is the original behaviour.
+
+The rule that keeps this coherent: **a shot renders on the model it was
+planned on.** `PlanShotsJob` resolves the model per scene — before durations
+are computed, because clip-length ladders are per model — and stamps
+`shots.model`. `RenderShotJob` and `CostEstimator` both read that stamp back
+through `ModelRegistry::forShot()`. Re-resolving at render time would let a
+shot planned at 8 seconds against Veo be handed to Kling, whose ladder is 5
+or 10.
+
+`forShot()` honours `shots.model` **only when it is one of the models the
+project chose.** Anything else is a stale row, not a third model — honouring
+it would let a shot carrying `fake` be costed at zero on a project pinned to
+something expensive, which is the exact hole the budget cap exists to close.
+`CostEstimator::capabilitiesFor()` applies the same rule; keep them in step.
+
 ## Timing: narration is the master clock
 
 FR-16/17/18. `ShotPlanner` reads the model's supported clip lengths as data,

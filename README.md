@@ -248,11 +248,8 @@ Stated plainly rather than left for you to discover:
 3. **Character consistency (G2/FR-6) is reachable but unproven.** The
    `kling-2-5-turbo-pro-i2v` entry wires the image-to-video path end to end,
    but none of its four `VERIFY_IN_DASHBOARD` values was read from fal's model
-   page — see `docs/PROVIDER-RESEARCH.md` §8. It also declares image-to-video
-   *only*, so shots without a locked character cannot render on it; the project
-   page counts them and warns before anything is spent. **Per-shot model
-   selection** — text-to-video for uncharactered shots, image-to-video for the
-   rest — is the real answer and is not built.
+   page — see `docs/PROVIDER-RESEARCH.md` §8. The path is built and tested;
+   the provider facts behind it are not confirmed.
 4. **Per-scene SFX (FR-13, Phase 2)** has an interface and a fake driver, but is
    not placed on the assembly timeline.
 5. **No polling/websockets.** Queued stages update on page refresh. This starts

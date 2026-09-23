@@ -44,14 +44,13 @@ class PlanShotsJob extends StudioJob
             throw new RuntimeException("Cannot plan shots: {$incompatibility}");
         }
 
-        // The project's pinned model decides the limits, not whichever driver
+        // The project's pinned models decide the limits, not whichever driver
         // happens to be bound. Planning against the driver would buy clip
         // lengths the chosen model cannot render.
-        $capabilities = app(ModelRegistry::class)->forProject($project);
-        $clipLengths = $capabilities->clipLengths;
+        $registry = app(ModelRegistry::class);
         $maxShots = (int) config('studio.limits.max_shots', 60);
 
-        DB::transaction(function () use ($project, $planner, $clipLengths, $capabilities, $maxShots) {
+        DB::transaction(function () use ($project, $planner, $registry, $maxShots) {
             // Planning replaces the shot list. Any rendered clips are detached
             // rather than deleted — the Asset rows survive, so nothing the owner
             // has already paid for is destroyed by a re-plan.
@@ -60,7 +59,24 @@ class PlanShotsJob extends StudioJob
             $sequence = 1;
 
             foreach ($project->scenes as $scene) {
-                foreach ($planner->planScene($scene, $clipLengths) as $plan) {
+                $cast = $this->charactersInScene($scene, $project);
+
+                // Per-shot model selection happens HERE, before the durations
+                // are computed — not at render time. The clip-length ladder is
+                // a property of the model, so a scene planned against Veo's
+                // 5/6/7/8 and then rendered on Kling's 5-or-10 would ask for a
+                // length that model cannot produce. Resolving first and
+                // planning against that ladder keeps the two in step.
+                //
+                // Shots split from one scene share its cast (FR-17), so the
+                // resolution is per scene and every shot it produces inherits
+                // it.
+                $capabilities = $registry->resolveForShot(
+                    $project,
+                    $cast->contains(fn ($character) => $character->canonical_reference_asset_id !== null),
+                );
+
+                foreach ($planner->planScene($scene, $capabilities->clipLengths) as $plan) {
                     if ($sequence > $maxShots) {
                         break 2;
                     }
@@ -83,9 +99,7 @@ class PlanShotsJob extends StudioJob
 
                     // FR-17: shots split from one scene share its cast, so the
                     // same locked reference drives every one of them.
-                    $shot->characters()->sync(
-                        $this->charactersInScene($scene, $project)->pluck('id')->all()
-                    );
+                    $shot->characters()->sync($cast->pluck('id')->all());
                 }
             }
         });

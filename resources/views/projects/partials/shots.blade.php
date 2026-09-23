@@ -29,6 +29,13 @@
                             scene {{ $shot->scene?->sequence }} ·
                             clip {{ number_format((float) $shot->target_duration_seconds, 1) }}s ·
                             narration {{ number_format((float) $shot->narration_duration_seconds, 2) }}s
+                            {{-- Shown per shot because with a companion model
+                                 configured they genuinely differ, and the two
+                                 rates in the cost estimate are otherwise
+                                 unexplained. --}}
+                            @if (($shotModels[$shot->id] ?? null) && count(array_unique($shotModels->all())) > 1)
+                                · <span title="Rendering model">{{ $shotModels[$shot->id] }}</span>
+                            @endif
                         </span>
                     </header>
 
