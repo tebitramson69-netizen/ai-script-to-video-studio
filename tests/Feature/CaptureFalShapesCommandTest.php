@@ -136,6 +136,44 @@ class CaptureFalShapesCommandTest extends TestCase
             ->assertSuccessful();
     }
 
+    public function test_it_can_probe_an_image_to_video_model(): void
+    {
+        // The endpoint whose shapes are least certain is the one the probe
+        // could not reach at all: it built a text-to-video request, which an
+        // image-to-video-only model refuses before any URL is tried.
+        $this->artisan('studio:capture-fal-shapes', [
+            '--model' => 'kling-2-5-turbo-pro-i2v',
+            '--dry-run' => true,
+        ])
+            ->expectsOutputToContain('image-to-video')
+            ->expectsOutputToContain('image_url')
+            ->assertSuccessful();
+    }
+
+    public function test_the_inlined_image_is_abbreviated_in_the_printed_payload(): void
+    {
+        // A reference image inlines as hundreds of kilobytes of base64.
+        // Printing it verbatim would bury the fields worth reading; the file
+        // written to disk keeps the whole thing.
+        $this->artisan('studio:capture-fal-shapes', [
+            '--model' => 'kling-2-5-turbo-pro-i2v',
+            '--dry-run' => true,
+        ])
+            ->expectsOutputToContain('chars]')
+            ->assertSuccessful();
+    }
+
+    public function test_a_missing_reference_image_is_refused(): void
+    {
+        $this->artisan('studio:capture-fal-shapes', [
+            '--model' => 'kling-2-5-turbo-pro-i2v',
+            '--image' => '/no/such/reference.png',
+            '--dry-run' => true,
+        ])
+            ->expectsOutputToContain('does not exist')
+            ->assertFailed();
+    }
+
     public function test_it_refuses_a_duration_the_model_cannot_render(): void
     {
         // Kling does 5 or 10 and nothing between. Asking for 7 would buy an

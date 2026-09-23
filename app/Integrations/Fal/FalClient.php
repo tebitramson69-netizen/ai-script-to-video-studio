@@ -96,9 +96,21 @@ class FalClient
      */
     public function result(string $endpoint, string $requestId, ?string $resultUrl = null): array
     {
-        return $this->getFirstThatExists(
-            $resultUrl !== null ? [$resultUrl] : $this->requestUrls($endpoint, $requestId),
-        );
+        if ($resultUrl !== null) {
+            return $this->getFirstThatExists([$resultUrl]);
+        }
+
+        // Sources disagree on whether the result sits at the bare request URL
+        // or at a /response suffix: fal's queue docs show the bare path, while
+        // a documented submit response carries a response_url ending /response.
+        // Both are tried, bare first. A wrong candidate costs one 404 on a cold
+        // cache and nothing at all when the submit response gave us the URL.
+        $bare = $this->requestUrls($endpoint, $requestId);
+
+        return $this->getFirstThatExists([
+            ...$bare,
+            ...array_map(fn (string $url) => $url.'/response', $bare),
+        ]);
     }
 
     /**
@@ -175,6 +187,10 @@ class FalClient
 
         $urls = [$this->queueUrl."/{$endpoint}/requests/{$id}"];
 
+        // fal documents a model id as "namespace/model" — two segments, e.g.
+        // fal-ai/fast-sdxl. Kling's is five
+        // (fal-ai/kling-video/v2.5-turbo/pro/image-to-video), so which form
+        // addresses its requests is genuinely ambiguous and both are tried.
         $segments = explode('/', $endpoint);
 
         if (count($segments) > 2) {

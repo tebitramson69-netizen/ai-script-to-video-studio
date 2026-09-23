@@ -60,20 +60,65 @@ class KlingImageToVideoTest extends TestCase
         $this->assertFalse($model->supportsMode(GenerationMode::TextToVideo));
     }
 
-    public function test_the_unverified_price_is_the_over_estimate_not_the_sibling_rate(): void
+    public function test_the_rate_matches_the_corroborated_figure(): void
     {
-        // $0.20/s is the top of the third-party range for Kling on fal, chosen
-        // under the over-estimate rule: over-estimating makes the cap refuse a
-        // run, under-estimating lets it overspend.
+        // $0.35 for 5s, $0.07 per additional second — flat $0.07/s, the same as
+        // the owner-verified text-to-video sibling. Three independent sources
+        // agree (docs/PROVIDER-RESEARCH.md §9).
         //
-        // This assertion exists to stop anyone quietly copying the verified
-        // $0.07 text-to-video rate across. Same model, but the rate for this
-        // conditioning has never been read.
-        $this->assertSame(0.20, $this->model()->costPerSecondUsd());
-        $this->assertNotSame(
+        // This replaced a $0.20/s placeholder that had no evidence behind it.
+        // Pinned here so a future edit has to argue with the research rather
+        // than quietly reintroduce a guess.
+        $this->assertSame(0.07, $this->model()->costPerSecondUsd());
+
+        $this->assertSame(
             app(ModelRegistry::class)->video('kling-2-5-turbo-pro')->costPerSecondUsd(),
             $this->model()->costPerSecondUsd(),
+            'Same model tier, different conditioning — the published rate is the same.',
         );
+    }
+
+    public function test_nothing_optional_is_sent_to_the_image_to_video_endpoint(): void
+    {
+        // Every published Kling image-to-video schema lists prompt, image_url,
+        // duration, negative_prompt and cfg_scale — and no aspect_ratio.
+        // Image-to-video takes its framing from the starting image, so there is
+        // nothing to send, and sending it anyway would risk a 4xx that reads
+        // like a wrong URL.
+        $path = tempnam(sys_get_temp_dir(), 'ref_').'.png';
+        file_put_contents($path, base64_decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+        ));
+
+        $payload = app(FalPayloadBuilder::class)->build(
+            new ClipRequest(
+                prompt: 'the narrator turns to camera',
+                durationSeconds: 5.0,
+                aspectRatio: AspectRatio::Landscape,
+                mode: GenerationMode::ImageToVideo,
+                resolution: VideoResolution::Hd1080,
+                referenceImagePath: $path,
+                modelKey: self::KEY,
+            ),
+            $this->model(),
+        );
+
+        $this->assertSame(['prompt', 'duration', 'image_url'], array_keys($payload));
+
+        @unlink($path);
+    }
+
+    public function test_reference_images_are_generated_at_the_project_ratio(): void
+    {
+        // The property that makes sending no aspect_ratio safe. The endpoint
+        // takes its framing from the starting image, and
+        // GenerateCharacterCandidatesJob generates every reference at the
+        // project's ratio — so character shots come back in the right shape
+        // without asking. If that ever changes, they start arriving wrong and
+        // the assembler letterboxes them.
+        $source = file_get_contents(base_path('app/Jobs/GenerateCharacterCandidatesJob.php'));
+
+        $this->assertStringContainsString('aspectRatio: $project->aspect_ratio', $source);
     }
 
     public function test_the_label_carries_the_caveat_to_the_dropdown(): void

@@ -148,7 +148,11 @@ class PerShotModelSelectionTest extends TestCase
 
     public function test_the_estimate_carries_both_rates_at_once(): void
     {
-        $project = $this->pairedProject();
+        // Paired across two genuinely different rates on purpose. Both Kling
+        // entries are $0.07/s, so pairing them could not tell a correct
+        // per-model estimate apart from a lazy one that prices everything at
+        // the primary.
+        $project = $this->pairedProject(companion: 'veo-3-1-fast');
         $scene = Scene::factory()->for($project)->create();
 
         Shot::factory()->for($project)->for($scene)->create([
@@ -160,7 +164,7 @@ class PerShotModelSelectionTest extends TestCase
 
         Shot::factory()->for($project)->for($scene)->create([
             'sequence' => 2,
-            'model' => self::I2V,
+            'model' => 'veo-3-1-fast',
             'target_duration_seconds' => 10,
             'status' => ShotStatus::Pending,
         ]);

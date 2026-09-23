@@ -475,6 +475,89 @@ registry entry.
 
 ---
 
+## 9. Deep search, 23 Sep 2026 — the image-to-video entry
+
+fal.ai is still **unreachable from this codebase**: every `fal.ai` fetch returns
+`EGRESS_BLOCKED` from the build environment's proxy, as do `atlascloud.ai`,
+`agent-skills.md` and other aggregators. Web *search* works and returns fal's
+own pages in its index, so the findings below come from search summaries of
+those pages plus third-party mirrors — **Tier B throughout**. Nothing here was
+read off the page by the account owner, which is what Tier A requires.
+
+That matters for the price above all, so read the caveat on each row.
+
+### What was corroborated
+
+| Value | Finding | Strength |
+|---|---|---|
+| Endpoint | `fal-ai/kling-video/v2.5-turbo/pro/image-to-video` | **The guess was right.** fal's own model page for it is indexed at exactly that path, and a third-party reference quotes `POST https://fal.run/fal-ai/kling-video/v2.5-turbo/pro/image-to-video`. |
+| Price | $0.35 for 5s, $0.07 per additional second — flat **$0.07/s** | Three independent searches agree, and it equals the owner-verified text-to-video rate. |
+| Durations | `duration` enum, **5 or 10**, default 5 | Matches the sibling, as expected for a ladder belonging to the model rather than the conditioning. |
+| Input schema | `prompt` (required), `image_url` (required), `duration`, `negative_prompt`, `cfg_scale`, `last_image` | Consistent across the v1, v1.6, v2.1 and v2.5 image-to-video pages. |
+| Aspect ratio | **Not a parameter on image-to-video.** | Absent from every image-to-video schema found. One search that mixed text-to-video and image-to-video reported `16:9 / 9:16 / 1:1`; the version-specific results do not. Framing comes from the starting image. |
+
+### The price correction, and why the over-estimate rule did not hold
+
+The entry shipped at **$0.20/s** — the top of the third-party range, chosen
+under the over-estimate rule because no image-to-video figure existed at all.
+It is now **$0.07/s**.
+
+The rule governs an *unknown* price. It is not a licence to keep a number three
+sources contradict: an estimate everyone knows is wrong is an estimate nobody
+reads, and a cap calibrated on it refuses work that is affordable. The exposure
+if this is still wrong is bounded and small — Kling **v3** turbo pro
+image-to-video is $0.14/s, so the worst plausible error is 2x, not unbounded.
+
+### The consequence for framing
+
+Because the endpoint takes no `aspect_ratio`, the output follows the starting
+image. That is safe here only because `GenerateCharacterCandidatesJob` already
+generates every character reference at `$project->aspect_ratio` — so character
+shots come back in the project's shape without being asked. A test pins that
+property, because if reference generation ever stops honouring the project
+ratio, character shots start arriving in the wrong shape and the assembler
+letterboxes them.
+
+### The queue protocol, confirmed
+
+The shapes `FalClient` was written against are corroborated by fal's own queue
+documentation:
+
+- submit returns `{request_id, response_url, status_url, cancel_url, queue_position}`
+- status values are `IN_QUEUE`, `IN_PROGRESS`, `COMPLETED`
+- status sits at `https://queue.fal.run/{model_id}/requests/{request_id}/status`
+- the video URL sits at `video.url` in the result
+
+Two things stayed ambiguous and the adapter now covers both:
+
+1. **The result URL.** fal's queue docs show the bare
+   `/requests/{request_id}`; one documented submit response carries a
+   `response_url` ending `/response`. Both are now tried, bare first.
+2. **The model id in a request URL.** fal documents a model id as
+   `namespace/model` — two segments. Kling's is five. Both forms were already
+   tried; the docs now explain why.
+
+Neither costs anything: a wrong candidate is one 404 on a cold cache, and when
+the submit response supplies the URL it is followed verbatim.
+
+### Still Tier C — only the account can answer
+
+- The minimum top-up, and whether a Cameroonian card clears it.
+- Whether a `resolution` parameter exists on either endpoint. No source
+  mentions one, which is why none is sent.
+- Whether Kling 2.5 accepts `1:1`. Evidence conflicts, and it is moot for
+  image-to-video, which takes no ratio at all.
+
+### Worth knowing for later
+
+Newer Kling models are on fal: **v2.6 pro image-to-video** (advertised with
+native audio, which FR-14 would want switched off) and **v3 turbo pro
+image-to-video at $0.14/s**. There is also a **standard** tier of 2.5 turbo
+alongside pro. None is registered; 2.5 turbo pro remains the only model with
+any owner-verified figure behind it.
+
+---
+
 ## Sources
 
 All secondary. None read directly; all via search-engine summaries.
@@ -511,6 +594,19 @@ Google Veo:
 
 Spend-limit risk:
 - https://blog.redhub.ai/api-spending-limits
+
+Deep search, 23 Sep 2026 — all via search summaries; fal.ai itself is
+egress-blocked from this codebase:
+- https://fal.ai/models/fal-ai/kling-video/v2.5-turbo/pro/image-to-video *(blocked; indexed)*
+- https://fal.ai/models/fal-ai/kling-video/v2.5-turbo/pro/image-to-video/api *(blocked; indexed)*
+- https://fal.ai/docs/model-api-reference/video-generation-api/kling-video-v2.5-turbo-pro *(blocked)*
+- https://fal.ai/docs/model-endpoints/queue *(blocked)*
+- https://docs.fal.ai/model-apis/model-endpoints/queue *(blocked)*
+- https://fal.ai/models/fal-ai/kling-video/v3/turbo/pro/image-to-video *(blocked; indexed)*
+- https://www.atlascloud.ai/models/kwaivgi/kling-v2.5-turbo-pro/image-to-video *(blocked)*
+- https://vercel.com/ai-gateway/models/kling-v2.5-turbo-i2v
+- https://github.com/hosmelq/falai-php *(PHP client; confirms the three status strings)*
+- https://www.mux.com/blog/build-a-generative-video-app-with-fal-ai-and-mux
 
 Cameroon payments:
 - https://www.businessincameroon.com/finance/2412-15553-mtn-launches-mastercard-backed-virtual-momo-prepaid-card-in-cameroon *(blocked)*

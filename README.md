@@ -246,10 +246,12 @@ Stated plainly rather than left for you to discover:
 2. **No speech, music or SFX adapters.** Still blocked on PRD A1/A2 and a
    provider decision. `docs/PROVIDERS.md` gives the shape to implement.
 3. **Character consistency (G2/FR-6) is reachable but unproven.** The
-   `kling-2-5-turbo-pro-i2v` entry wires the image-to-video path end to end,
-   but none of its four `VERIFY_IN_DASHBOARD` values was read from fal's model
-   page — see `docs/PROVIDER-RESEARCH.md` §8. The path is built and tested;
-   the provider facts behind it are not confirmed.
+   `kling-2-5-turbo-pro-i2v` entry wires the image-to-video path end to end.
+   Its endpoint, duration ladder and $0.07/s rate are corroborated by
+   third-party sources (`docs/PROVIDER-RESEARCH.md` §9) but none has been read
+   off the page by the account owner, so all of it is Tier B. fal.ai is
+   unreachable from this codebase — every request is `EGRESS_BLOCKED` — so
+   Tier A needs someone with an account.
 4. **Per-scene SFX (FR-13, Phase 2)** has an interface and a fake driver, but is
    not placed on the assembly timeline.
 5. **No polling/websockets.** Queued stages update on page refresh. This starts

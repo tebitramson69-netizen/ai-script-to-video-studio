@@ -184,10 +184,11 @@ return [
         // image-to-video model, PRD G2/FR-6 character consistency cannot work
         // at all — the verified text-to-video endpoint takes no starting frame.
         //
-        // NOTHING HERE WAS READ FROM THE MODEL PAGE. Every value below is
-        // either derived from the verified text-to-video entry or set to a
-        // deliberately pessimistic placeholder. Read fal's model page and
-        // correct all four marked values together.
+        // Researched 23 Sep 2026 and largely corroborated — see
+        // docs/PROVIDER-RESEARCH.md §9 for the sources and their limits. The
+        // endpoint, the 5-or-10 ladder and the $0.07/s rate now have
+        // third-party agreement; none has been read off the page by the owner,
+        // so all of it remains Tier B.
         //
         // The failure modes are asymmetric, which is why this is safe to ship
         // unverified: a wrong endpoint or a wrong parameter name returns a 4xx
@@ -200,10 +201,12 @@ return [
             // are gone.
             'label' => 'Kling 2.5 Turbo Pro — Image to Video (fal, UNVERIFIED)',
 
-            // VERIFY_IN_DASHBOARD (1/4): derived by substituting the last
-            // segment of the verified text-to-video id, not read anywhere. If
-            // it is wrong you get a free 404, and FAL_QUEUE_URL / this env var
-            // override it without a code change.
+            // Tier B (23 Sep 2026): the guessed id turned out to be right.
+            // fal's own model page for it appears in search results under
+            // exactly this path, and a third-party reference quotes
+            // POST https://fal.run/fal-ai/kling-video/v2.5-turbo/pro/image-to-video.
+            // Still not read from the page by the owner, and still overridable
+            // by env without a code change.
             'endpoint' => env(
                 'STUDIO_KLING_I2V_ENDPOINT',
                 'fal-ai/kling-video/v2.5-turbo/pro/image-to-video',
@@ -217,12 +220,18 @@ return [
             // before anything is spent.
             'modes' => ['image_to_video'],
 
-            // Inherited from the verified sibling. Same model, same tier; the
-            // duration ladder is a property of the model, not the conditioning.
-            // Still worth confirming — VERIFY_IN_DASHBOARD (2/4).
+            // Tier B corroborated: the published schema gives duration as an
+            // enum of 5 or 10, defaulting to 5 — matching the sibling, as
+            // expected for a ladder that belongs to the model rather than to
+            // the conditioning.
             'clip_lengths' => [5, 10],
 
-            // VERIFY_IN_DASHBOARD (3/4), as on the text-to-video entry.
+            // VERIFY_IN_DASHBOARD, as on the text-to-video entry. No source
+            // found mentions a resolution parameter on this endpoint at all,
+            // which is why none is sent. Sources do report 1:1 support for
+            // Kling 2.5, but it is withheld here because the evidence conflicts
+            // and this endpoint takes no aspect_ratio anyway — the reference
+            // image decides.
             'resolutions' => ['720p', '1080p'],
             'default_resolution' => '1080p',
             'aspect_ratios' => ['16:9', '9:16'],
@@ -230,21 +239,34 @@ return [
             'supports_native_audio_toggle' => false,
             'emits_native_audio' => false,
 
-            // VERIFY_IN_DASHBOARD (4/4) — and the one that costs money to get
-            // wrong. No image-to-video figure exists for this model in any
-            // source we have. Set to $0.20/s, the top of the third-party range
-            // quoted for Kling on fal (docs/PROVIDER-RESEARCH.md §2), under the
-            // over-estimate rule above.
+            // Tier B (23 Sep 2026): $0.35 for 5 seconds, $0.07 per additional
+            // second — the SAME flat $0.07/s as the owner-verified
+            // text-to-video sibling. Three independent searches agree, and it
+            // is consistent with a model whose conditioning changes but whose
+            // tier does not.
             //
-            // This is 2.9x the verified text-to-video rate and it is meant to
-            // sting: at $0.20/s a 64-second video is $12.80 against the $15
-            // default cap, leaving no room to regenerate a shot. The estimator
-            // will therefore refuse work that may well be affordable. That is
-            // the correct direction to be wrong in, and it is fixed by one
-            // number once the page is read.
-            'cost_per_second_usd' => 0.20,
+            // This replaces a $0.20/s placeholder that had no evidence behind
+            // it at all. The over-estimate rule governs an UNKNOWN price; it is
+            // not a licence to keep a number three sources contradict, because
+            // an estimate everyone knows is wrong is one nobody reads. Still
+            // Tier B, so still worth confirming on the live account — but no
+            // longer a guess.
+            //
+            // For scale: Kling v3 turbo pro image-to-video is $0.14/s, so even
+            // if this is somehow the v3 rate the exposure is 2x, not unbounded.
+            'cost_per_second_usd' => 0.07,
 
-            'payload_parameters' => ['aspect_ratio'],
+            // Nothing optional goes on the wire. Every published Kling
+            // image-to-video schema (v1, v1.6, v2.1, v2.5) lists prompt,
+            // image_url, duration, negative_prompt and cfg_scale — and NO
+            // aspect_ratio. Image-to-video takes its framing from the starting
+            // image, which is why there is nothing to send.
+            //
+            // That is safe here only because GenerateCharacterCandidatesJob
+            // already generates every reference at $project->aspect_ratio. If
+            // that ever changes, character shots start coming back in the
+            // wrong shape and the assembler letterboxes them.
+            'payload_parameters' => [],
         ],
 
         'veo-3-1-fast' => [

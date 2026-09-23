@@ -6,6 +6,7 @@ use App\Contracts\Data\ClipRequest;
 use App\Contracts\Data\ModelCapabilities;
 use App\Contracts\ProviderException;
 use App\Enums\AspectRatio;
+use App\Enums\GenerationMode;
 use App\Enums\VideoResolution;
 use App\Integrations\Fal\FalPayloadBuilder;
 use App\Services\Provider\ModelRegistry;
@@ -47,6 +48,7 @@ class CaptureFalShapesCommand extends Command
                             {--resolution= : Override the resolution. Sent only if the model declares it in payload_parameters.}
                             {--aspect= : Override the aspect ratio. Sent only if the model declares it in payload_parameters.}
                             {--audio : Ask for native audio. Ignored by models with no audio toggle.}
+                            {--image= : Starting frame for an image-to-video model. Required for a real run on one.}
                             {--minimal : Probe with prompt and duration alone, bypassing the adapter\'s payload. Use to bisect a 4xx.}
                             {--poll-interval=5 : Seconds between status checks}
                             {--max-polls=60 : Give up after this many checks}
@@ -104,7 +106,10 @@ class CaptureFalShapesCommand extends Command
 
         $this->line('');
         $this->components->twoColumnDetail('<fg=cyan>Submit URL</>', $submitUrl);
-        $this->components->twoColumnDetail('<fg=cyan>Payload</>', json_encode($payload, JSON_UNESCAPED_SLASHES));
+        $this->components->twoColumnDetail(
+            '<fg=cyan>Payload</>',
+            json_encode($this->abbreviate($payload), JSON_UNESCAPED_SLASHES),
+        );
         $this->components->twoColumnDetail(
             '<fg=cyan>Built by</>',
             $this->option('minimal')
@@ -303,11 +308,18 @@ class CaptureFalShapesCommand extends Command
      */
     protected function clipRequest(): ClipRequest
     {
+        // An image-to-video-only model cannot be probed with a text-to-video
+        // request, and that is exactly the model whose shapes are least
+        // certain — so the probe has to be able to reach it.
+        $needsImage = ! $this->capabilities->supportsMode(GenerationMode::TextToVideo);
+
         return new ClipRequest(
             prompt: (string) $this->option('prompt'),
             durationSeconds: $this->duration(),
             aspectRatio: $this->aspectRatio(),
+            mode: $needsImage ? GenerationMode::ImageToVideo : GenerationMode::TextToVideo,
             resolution: $this->resolution(),
+            referenceImagePath: $needsImage ? $this->referenceImage() : null,
 
             // FR-14 inverted: every narrated project mutes native audio, so the
             // probe must too unless --audio is passed, or it captures a shape
@@ -315,6 +327,47 @@ class CaptureFalShapesCommand extends Command
             muteNativeAudio: ! $this->option('audio'),
             modelKey: $this->capabilities->key,
         );
+    }
+
+    /**
+     * The starting frame for an image-to-video probe.
+     *
+     * A real run needs a real image — the point is to learn what the endpoint
+     * accepts, and a 1x1 pixel may well be rejected for reasons that tell you
+     * nothing. A dry run gets a synthesised placeholder instead, so the payload
+     * shape can still be inspected without one.
+     */
+    protected function referenceImage(): string
+    {
+        $supplied = trim((string) $this->option('image'));
+
+        if ($supplied !== '') {
+            if (! is_file($supplied)) {
+                throw ProviderException::permanent("Reference image {$supplied} does not exist.", 'fal');
+            }
+
+            return $supplied;
+        }
+
+        if (! $this->option('dry-run')) {
+            throw ProviderException::permanent(
+                $this->capabilities->label.' is image-to-video only, so it needs a starting frame. '.
+                'Pass --image=/path/to/reference.png — ideally a real character reference at the '.
+                'project aspect ratio, since that is what the pipeline will send.',
+                'fal',
+            );
+        }
+
+        $this->components->warn(
+            'No --image given, so the dry run uses a 1x1 placeholder. A real run needs a real one.'
+        );
+
+        $path = tempnam(sys_get_temp_dir(), 'fal_probe_').'.png';
+        file_put_contents($path, base64_decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+        ));
+
+        return $path;
     }
 
     protected function aspectRatio(): AspectRatio
@@ -365,6 +418,27 @@ class CaptureFalShapesCommand extends Command
         }
 
         return $resolution;
+    }
+
+    /**
+     * The payload with any data URI shortened.
+     *
+     * An inlined reference image is hundreds of kilobytes of base64; printing
+     * it verbatim would bury the three fields actually worth reading. The file
+     * written to disk keeps the whole thing.
+     *
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    protected function abbreviate(array $payload): array
+    {
+        foreach ($payload as $key => $value) {
+            if (is_string($value) && str_starts_with($value, 'data:')) {
+                $payload[$key] = mb_substr($value, 0, 40).'…['.number_format(mb_strlen($value)).' chars]';
+            }
+        }
+
+        return $payload;
     }
 
     /**
