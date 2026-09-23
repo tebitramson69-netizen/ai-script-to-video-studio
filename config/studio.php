@@ -7,6 +7,7 @@ use App\Integrations\Fake\FakeScriptStructurer;
 use App\Integrations\Fake\FakeSoundEffectGenerator;
 use App\Integrations\Fake\FakeSpeechSynthesizer;
 use App\Integrations\Fake\FakeVideoGenerator;
+use App\Integrations\Fal\FalSpeechSynthesizer;
 use App\Integrations\Fal\FalVideoGenerator;
 
 /**
@@ -58,6 +59,9 @@ return [
         ],
         'speech_synthesizer' => [
             'fake' => FakeSpeechSynthesizer::class,
+
+            // Any fal-hosted TTS model, chosen by studio.default_speech_model.
+            'fal' => FalSpeechSynthesizer::class,
         ],
         'music_generator' => [
             'fake' => FakeMusicGenerator::class,
@@ -323,6 +327,76 @@ return [
     ],
 
     'default_video_model' => env('STUDIO_VIDEO_MODEL', 'fake'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Speech models
+    |--------------------------------------------------------------------------
+    |
+    | Narration is the master clock (FR-16), so this is the most load-bearing
+    | audio in the system — and the cheapest. Narration for a 60-second video is
+    | roughly 900 characters: $0.09 on ElevenLabs, under $0.02 on Kokoro,
+    | against ~$4.48 for the video itself. Speech is at most 2% of a run, so
+    | pick for voice quality and language, not for price.
+    |
+    | Every one of these is hosted by fal, which is the point: the same
+    | credential, the same payment method and the same adapter as video. Setting
+    | up a second provider account is a real cost when clearing a USD charge
+    | from Cameroon is the project's actual blocker (PRD A2).
+    |
+    | Rates below are Tier B — read from search summaries of fal's own model
+    | pages on 23 Sep 2026, not from a live account. See
+    | docs/PROVIDER-RESEARCH.md §10.
+    |
+    */
+
+    'speech_models' => [
+
+        'fake' => [
+            'label' => 'Fake narrator (local tone, free)',
+            'endpoint' => null,
+            'cost_per_1k_characters_usd' => 0.0,
+        ],
+
+        // Default. Chosen for this product rather than for the headline: the
+        // videos here are explainers, folk tales and adverts — narration, where
+        // clarity beats emotional range — and reviews consistently put Kokoro
+        // ahead of the expensive options on exactly that, while costing a fifth
+        // as much.
+        //
+        // The deciding factor is French. Cameroon is officially bilingual, and
+        // Kokoro ships a dedicated French model. Language is chosen by ENDPOINT
+        // here, which is why speech models carry an endpoint map.
+        'kokoro' => [
+            'label' => 'Kokoro TTS (fal)',
+            'endpoints' => [
+                'en' => env('STUDIO_KOKORO_EN_ENDPOINT', 'fal-ai/kokoro/american-english'),
+                'fr' => env('STUDIO_KOKORO_FR_ENDPOINT', 'fal-ai/kokoro/french'),
+            ],
+            'cost_per_1k_characters_usd' => 0.02,
+
+            // VERIFY_IN_DASHBOARD: the voice parameter's name and its accepted
+            // values are unconfirmed, so nothing optional is sent and the
+            // model's own default voice is used. An unaccepted parameter fails
+            // the whole call.
+            'payload_parameters' => [],
+        ],
+
+        // Registered for when expression matters more than clarity — a
+        // character speaking rather than a narrator explaining. Five times the
+        // price, which on a 60-second video is the difference between $0.018
+        // and $0.09, so switch freely: STUDIO_SPEECH_MODEL=elevenlabs-v3.
+        //
+        // One endpoint for every language, unlike Kokoro.
+        'elevenlabs-v3' => [
+            'label' => 'ElevenLabs Eleven v3 (fal)',
+            'endpoint' => env('STUDIO_ELEVENLABS_ENDPOINT', 'fal-ai/elevenlabs/tts/eleven-v3'),
+            'cost_per_1k_characters_usd' => 0.10,
+            'payload_parameters' => [],
+        ],
+    ],
+
+    'default_speech_model' => env('STUDIO_SPEECH_MODEL', 'fake'),
 
     /*
     |--------------------------------------------------------------------------

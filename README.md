@@ -243,8 +243,11 @@ Stated plainly rather than left for you to discover:
    written to tolerate being wrong — it finds the output by structure as well as
    by name. Run `studio:capture-fal-shapes` against a funded account to replace
    the assumption with a fixture.
-2. **No speech, music or SFX adapters.** Still blocked on PRD A1/A2 and a
-   provider decision. `docs/PROVIDERS.md` gives the shape to implement.
+2. **Narration has a real adapter; music and SFX do not.** `FalSpeechSynthesizer`
+   renders narration on any fal-hosted TTS model, defaulting to Kokoro —
+   see `docs/PROVIDER-RESEARCH.md` §10 for why fal rather than ElevenLabs
+   directly, and why the cheaper model is the default. Like the video adapter
+   it is tested only against faked HTTP. Music and SFX are still fakes.
 3. **Character consistency (G2/FR-6) is reachable but unproven.** The
    `kling-2-5-turbo-pro-i2v` entry wires the image-to-video path end to end.
    Its endpoint, duration ladder and $0.07/s rate are corroborated by

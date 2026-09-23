@@ -29,6 +29,17 @@ class FalResponseMapper
     protected const STATUS_KEYS = ['status', 'state'];
 
     /** Dotted paths, most specific first. */
+    protected const AUDIO_PATHS = [
+        'audio.url',
+        'output.audio.url',
+        'data.audio.url',
+        'response.audio.url',
+        'audio_url',
+        'audio.0.url',
+        'url',
+    ];
+
+    /** Dotted paths, most specific first. */
     protected const VIDEO_PATHS = [
         'video.url',
         'output.video.url',
@@ -161,6 +172,43 @@ class FalResponseMapper
         }
 
         return null;
+    }
+
+    /**
+     * The generated audio.
+     *
+     * Same two-stage strategy as videoUrl(): the documented path first, then a
+     * structural search for anything that looks like an audio file. Kept as its
+     * own method rather than folded in, because a text-to-speech result and a
+     * video result can both carry several URLs and picking the wrong kind is a
+     * silent failure — you get a file, it plays, and it is the wrong one.
+     *
+     * @param  array<string, mixed>  $body
+     */
+    public function audioUrl(array $body): ?string
+    {
+        $flat = $this->flatten($body);
+
+        foreach (self::AUDIO_PATHS as $path) {
+            $value = $flat[$path] ?? null;
+
+            if (is_string($value) && str_starts_with($value, 'http')) {
+                return $value;
+            }
+        }
+
+        foreach ($flat as $value) {
+            if (is_string($value) && str_starts_with($value, 'http') && $this->looksLikeAudio($value)) {
+                return $value;
+            }
+        }
+
+        return null;
+    }
+
+    protected function looksLikeAudio(string $url): bool
+    {
+        return (bool) preg_match('/\.(mp3|wav|m4a|aac|ogg|opus|flac)(\?|#|$)/i', $url);
     }
 
     /**

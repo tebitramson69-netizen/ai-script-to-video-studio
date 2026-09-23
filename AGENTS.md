@@ -155,6 +155,18 @@ it would let a shot carrying `fake` be costed at zero on a project pinned to
 something expensive, which is the exact hole the budget cap exists to close.
 `CostEstimator::capabilitiesFor()` applies the same rule; keep them in step.
 
+## Speech models are chosen by language
+
+`studio.speech_models` is the sibling of `video_models`, and one entry may
+carry an endpoint *map* rather than a single endpoint: Kokoro ships a separate
+model id per language, so choosing French chooses a different URL. A language
+the configured model cannot speak is refused before any request is sent —
+narration in the wrong language is a wrong result, not a degraded one, and a
+silent fallback to English would be paid for before anyone noticed.
+
+`FalSpeechSynthesizer` **measures** the returned audio with ffprobe and ignores
+any duration the provider reports. See the next section for why.
+
 ## Timing: narration is the master clock
 
 FR-16/17/18. `ShotPlanner` reads the model's supported clip lengths as data,
@@ -162,8 +174,10 @@ rounds each scene **up** — never down — to a renderable length, and splits a
 scene exceeding the longest clip on sentence boundaries. The assembler trims or
 holds each clip to its *measured* narration, not its requested duration.
 
-A `SpeechSynthesizer` must return the measured duration. Returning the
-requested one desynchronises the whole export.
+A `SpeechSynthesizer` must return the MEASURED duration — from ffprobe on the
+downloaded file, never from what the provider says. A reported figure a tenth
+of a second out desynchronises every shot after it, and the error accumulates
+down the timeline rather than staying local.
 
 ---
 

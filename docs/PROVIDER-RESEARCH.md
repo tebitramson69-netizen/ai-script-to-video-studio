@@ -558,6 +558,78 @@ any owner-verified figure behind it.
 
 ---
 
+## 10. Choosing a narration provider, 23 Sep 2026
+
+Narration was the largest remaining gap, and not a close call: it is the master
+clock (FR-16/17/18). Shot durations round up to it, the assembler trims or
+holds every clip to it, and the export's runtime *is* it. The fake driver emits
+a tone of the right length — enough to exercise every timing rule, and no use
+at all as a video.
+
+### The number that settled it
+
+Narration for a 60-second video is roughly **900 characters**.
+
+| Option | Rate / 1k chars | 60s video | Share of a ~$4.48 run |
+|---|---|---|---|
+| Inworld TTS-1.5 Max (fal) | $0.010 | $0.009 | 0.2% |
+| xAI TTS v1 (fal) | $0.015 | $0.014 | 0.3% |
+| **Kokoro (fal)** | **$0.020** | **$0.018** | **0.4%** |
+| Chatterbox (fal) | $0.025 | $0.023 | 0.5% |
+| Dia / Orpheus / F5 (fal) | $0.040–0.050 | $0.036–0.045 | ~1% |
+| **ElevenLabs Eleven v3 (fal)** | **$0.100** | **$0.090** | **2%** |
+| ElevenLabs direct | $0.100 | $0.090 | 2% + a second account |
+
+**Speech is at most 2% of a run.** Choosing the cheapest option over the
+dearest saves about seven cents on a 60-second video. So price is noise, and
+the decision belongs to voice quality, language, and operations.
+
+### Why fal rather than ElevenLabs directly
+
+fal *hosts* ElevenLabs, at the same $0.10/1k. So going direct buys nothing on
+price and costs a second account, a second API key, and — the part that
+actually matters here — **a second payment method that clears a USD charge from
+Cameroon**. That is the project's real blocker (PRD A2), and solving it once is
+worth more than any rate in the table.
+
+It also means one adapter: `FalClient`, its error taxonomy and its queue
+handling were already written and tested for video.
+
+### Why Kokoro is the default
+
+- **The product is narration.** Explainers, folk tales and adverts — a narrator
+  explaining, not a character emoting. Comparisons put ElevenLabs ahead on
+  prosody and emotional range, and Kokoro ahead on clear professional
+  narration, which is the job here.
+- **French.** Cameroon is officially bilingual and Kokoro ships a dedicated
+  French model. Benchmarks put it at the lowest word error rate in 6 of 10
+  languages tested against ElevenLabs Multilingual v2.
+- **Switching costs one config line.** `STUDIO_SPEECH_MODEL=elevenlabs-v3` when
+  expression matters more than clarity. Given the table above, switch freely.
+
+### The structural finding
+
+**Language selection is endpoint selection.** Kokoro ships a separate model id
+per language (`fal-ai/kokoro/american-english`, `fal-ai/kokoro/french`) while
+ElevenLabs takes one endpoint for all of them. Speech models therefore carry an
+endpoint *map*, not a single endpoint — which makes a bilingual project a config
+entry rather than a special case in the adapter, and makes PRD Phase 3
+multilingual work mostly already done.
+
+A language the configured model cannot speak is refused **before** any request
+is sent. Narration in the wrong language is a wrong result, not a degraded one,
+and a silent fallback to English would be paid for before anyone noticed.
+
+### Tier
+
+All Tier B: search summaries of fal's own model pages, 23 Sep 2026. fal.ai
+remains `EGRESS_BLOCKED` from this codebase. The rates and the two endpoint ids
+need confirming on a live account, and the voice parameter is unconfirmed
+enough that nothing optional is sent at all — the models' own default voices are
+used, which is a usable narration rather than an error.
+
+---
+
 ## Sources
 
 All secondary. None read directly; all via search-engine summaries.
@@ -607,6 +679,17 @@ egress-blocked from this codebase:
 - https://vercel.com/ai-gateway/models/kling-v2.5-turbo-i2v
 - https://github.com/hosmelq/falai-php *(PHP client; confirms the three status strings)*
 - https://www.mux.com/blog/build-a-generative-video-app-with-fal-ai-and-mux
+
+Narration providers, 23 Sep 2026 — search summaries; fal.ai is egress-blocked:
+- https://fal.ai/models/fal-ai/kokoro/french *(blocked; indexed)*
+- https://fal.ai/models/fal-ai/kokoro/american-english *(blocked; indexed)*
+- https://fal.ai/models/fal-ai/elevenlabs/tts/eleven-v3 *(blocked; indexed)*
+- https://fal.ai/explore/text-to-speech-apis *(blocked; indexed)*
+- https://fal.ai/learn/tools/best-text-to-speech-apis *(blocked; indexed)*
+- https://elevenlabs.io/pricing
+- https://elevenlabs.io/blog/weve-lowered-api-agents-pricing-and-introduced-payg
+- https://reviewnexa.com/kokoro-tts-review/
+- https://texttolab.com/blog/open-source-text-to-speech
 
 Cameroon payments:
 - https://www.businessincameroon.com/finance/2412-15553-mtn-launches-mastercard-backed-virtual-momo-prepaid-card-in-cameroon *(blocked)*

@@ -3,6 +3,7 @@
 namespace App\Services\Provider;
 
 use App\Contracts\Data\ModelCapabilities;
+use App\Contracts\Data\SpeechModelCapabilities;
 use App\Enums\AspectRatio;
 use App\Enums\GenerationMode;
 use App\Models\Project;
@@ -20,6 +21,9 @@ class ModelRegistry
 {
     /** @var array<string, ModelCapabilities> */
     protected array $cache = [];
+
+    /** @var array<string, SpeechModelCapabilities> */
+    protected array $speechCache = [];
 
     public function video(string $key): ModelCapabilities
     {
@@ -164,6 +168,40 @@ class ModelRegistry
         return $companion === null || $companion->key === $primary->key
             ? [$primary]
             : [$primary, $companion];
+    }
+
+    /**
+     * Capabilities of one text-to-speech model.
+     */
+    public function speech(string $key): SpeechModelCapabilities
+    {
+        if (isset($this->speechCache[$key])) {
+            return $this->speechCache[$key];
+        }
+
+        $config = config("studio.speech_models.{$key}");
+
+        if (! is_array($config)) {
+            throw new InvalidArgumentException(
+                "Unknown speech model '{$key}'. Registered: ".implode(', ', $this->availableSpeechKeys()).'. '.
+                'Note that model keys cannot contain dots — config() would read them as nested paths.'
+            );
+        }
+
+        return $this->speechCache[$key] = SpeechModelCapabilities::fromConfig($key, $config);
+    }
+
+    public function defaultSpeech(): SpeechModelCapabilities
+    {
+        return $this->speech((string) config('studio.default_speech_model', 'fake'));
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function availableSpeechKeys(): array
+    {
+        return array_keys((array) config('studio.speech_models', []));
     }
 
     /**
