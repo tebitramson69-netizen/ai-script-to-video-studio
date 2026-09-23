@@ -398,13 +398,18 @@ Updated 22 Sep 2026. Steps 1 and 2 are done; what is left needs money.
 5. **Capture the queue payload shapes.**
    `php artisan studio:capture-fal-shapes` makes one small real generation and
    records the submit response, a status response caught mid-flight, and the
-   completed result. It reads the model's limits from the registry, so on Kling
-   it sends only `prompt` and `duration` — no `generate_audio`, which that
-   schema does not expose, and no resolution or aspect ratio, which are
-   unconfirmed. A rejected parameter comes back as a 4xx that reads like a
-   wrong URL, so the narrowest payload is the one most likely to answer the
-   question. `--dry-run` prints the exact request and costs nothing; the real
-   run asks before spending and redacts the key from everything it writes.
+   completed result. The payload is built by `FalPayloadBuilder` — the same
+   class the adapter uses — so what is captured is byte for byte what a real
+   render will send. On Kling that is `prompt`, `duration` and `aspect_ratio`:
+   no `generate_audio`, which the schema does not expose, and no `resolution`
+   or `seed`, whose names are unconfirmed there.
+
+   If it comes back 4xx, `--minimal` re-probes with `prompt` and `duration`
+   alone. That tells an unaccepted optional parameter apart from a wrong URL,
+   which otherwise look identical.
+
+   `--dry-run` prints the exact request and costs nothing; the real run asks
+   before spending and redacts the key from everything it writes.
 6. **Read the invoice.** Confirm the charge, the FX rate and any
    foreign-transaction fee. Those are part of the true cost per video and
    belong in the config constants.

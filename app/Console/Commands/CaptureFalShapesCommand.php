@@ -2,7 +2,12 @@
 
 namespace App\Console\Commands;
 
+use App\Contracts\Data\ClipRequest;
 use App\Contracts\Data\ModelCapabilities;
+use App\Contracts\ProviderException;
+use App\Enums\AspectRatio;
+use App\Enums\VideoResolution;
+use App\Integrations\Fal\FalPayloadBuilder;
 use App\Services\Provider\ModelRegistry;
 use Illuminate\Console\Command;
 use Illuminate\Http\Client\Response;
@@ -21,6 +26,16 @@ use InvalidArgumentException;
  *
  * It spends real money — one short clip — so it asks first and shows the
  * estimate before doing anything.
+ *
+ * The payload is built by FalPayloadBuilder, the same class the adapter uses.
+ * That is the whole value of the probe: a capture that sent a narrower payload
+ * than the adapter would declare the endpoint good and still leave the adapter
+ * able to 4xx on the first real render — having already spent the money that
+ * was meant to rule that out.
+ *
+ * --minimal opts out, sending prompt and duration alone. That is the bisect
+ * tool, not the default: when the full payload comes back 4xx, it answers
+ * whether the fault is an optional parameter or the endpoint itself.
  */
 class CaptureFalShapesCommand extends Command
 {
@@ -29,9 +44,10 @@ class CaptureFalShapesCommand extends Command
                             {--endpoint= : Raw provider model id, overriding the registry}
                             {--prompt=A calm river at dawn, slow drifting mist : Prompt for the test clip}
                             {--duration= : Clip length in seconds. Defaults to the model minimum, which is the cheapest probe.}
-                            {--resolution= : Send a resolution. Omitted by default — an unaccepted parameter can fail the call.}
-                            {--aspect= : Send an aspect ratio. Omitted by default, for the same reason.}
+                            {--resolution= : Override the resolution. Sent only if the model declares it in payload_parameters.}
+                            {--aspect= : Override the aspect ratio. Sent only if the model declares it in payload_parameters.}
                             {--audio : Ask for native audio. Ignored by models with no audio toggle.}
+                            {--minimal : Probe with prompt and duration alone, bypassing the adapter\'s payload. Use to bisect a 4xx.}
                             {--poll-interval=5 : Seconds between status checks}
                             {--max-polls=60 : Give up after this many checks}
                             {--dry-run : Print the request and exit without calling anything}
@@ -70,21 +86,31 @@ class CaptureFalShapesCommand extends Command
             return self::FAILURE;
         }
 
-        if (($durationError = $this->validateDuration()) !== null) {
-            $this->components->error($durationError);
+        $this->outputDir = $this->option('out')
+            ?: storage_path('app/private/fal-capture/'.now()->format('Ymd-His'));
+
+        try {
+            $payload = $this->buildPayload();
+        } catch (ProviderException $e) {
+            // The builder refuses an impossible request — a duration the model
+            // cannot render, an unsupported mode — before anything is sent.
+            // Failing here is the point: the alternative is paying to find out.
+            $this->components->error($e->getMessage());
 
             return self::FAILURE;
         }
 
-        $this->outputDir = $this->option('out')
-            ?: storage_path('app/private/fal-capture/'.now()->format('Ymd-His'));
-
-        $payload = $this->buildPayload();
         $submitUrl = "{$base}/{$model}";
 
         $this->line('');
         $this->components->twoColumnDetail('<fg=cyan>Submit URL</>', $submitUrl);
         $this->components->twoColumnDetail('<fg=cyan>Payload</>', json_encode($payload, JSON_UNESCAPED_SLASHES));
+        $this->components->twoColumnDetail(
+            '<fg=cyan>Built by</>',
+            $this->option('minimal')
+                ? '--minimal (prompt + duration only; NOT what the adapter sends)'
+                : 'FalPayloadBuilder — byte for byte what the adapter will send',
+        );
         $this->components->twoColumnDetail('<fg=cyan>Output</>', $this->outputDir);
         $this->line('');
 
@@ -209,41 +235,136 @@ class CaptureFalShapesCommand extends Command
     }
 
     /**
+     * The exact body the adapter would send for this model.
+     *
+     * Routed through FalPayloadBuilder rather than assembled here, so there is
+     * one place where a fal request is shaped. The previous version of this
+     * command built its own narrower payload, which meant a successful capture
+     * proved only that the *probe* worked — the adapter could still 4xx on the
+     * first real render over a parameter the probe never sent, after the money
+     * meant to rule that out had already been spent.
+     *
      * @return array<string, mixed>
+     *
+     * @throws ProviderException when the model cannot render what was asked for
      */
     protected function buildPayload(): array
     {
-        // Deliberately minimal. The point of this command is to discover the
-        // response shape, and the likeliest way to fail at that is to send a
-        // parameter the model does not accept — which usually comes back as a
-        // 4xx that reads like a wrong URL rather than a wrong payload.
-        $payload = [
-            'prompt' => (string) $this->option('prompt'),
-            'duration' => (int) $this->duration(),
-        ];
+        if ($this->option('minimal')) {
+            // The bisect path: the narrowest request that can still answer
+            // "does this endpoint exist and what does it return?". Use it when
+            // the full payload comes back 4xx, to tell an unaccepted optional
+            // parameter apart from a wrong URL.
+            return [
+                'prompt' => (string) $this->option('prompt'),
+                'duration' => (int) $this->duration(),
+            ];
+        }
 
-        // Kling 2.5 Turbo Pro exposes no audio toggle at all; Veo does, and
-        // turning it off halves Veo's rate (FR-14). Only send it where the
-        // model declares it.
-        if ($this->capabilities->supportsNativeAudioToggle) {
-            $payload['generate_audio'] = (bool) $this->option('audio');
-        } elseif ($this->option('audio')) {
+        $this->warnAboutIgnoredOptions();
+
+        return app(FalPayloadBuilder::class)->build($this->clipRequest(), $this->capabilities);
+    }
+
+    /**
+     * Say so when a flag will not reach the wire.
+     *
+     * A flag that is silently dropped is worse than one that is refused: you
+     * read the captured payload, see the parameter missing, and conclude the
+     * model rejected it — when in fact it was never sent. That is a false
+     * finding bought with a real charge.
+     */
+    protected function warnAboutIgnoredOptions(): void
+    {
+        if ($this->option('audio') && ! $this->capabilities->supportsNativeAudioToggle) {
             $this->components->warn(
-                $this->capabilities->label.' has no audio toggle; --audio ignored.'
+                $this->capabilities->label.' has no audio toggle; --audio is ignored.'
             );
         }
 
-        // Opt-in only: accepted values are unconfirmed for some models, and an
-        // unconfirmed parameter is exactly what a first probe should leave out.
-        if ($resolution = $this->option('resolution')) {
-            $payload['resolution'] = (string) $resolution;
+        foreach (['resolution', 'aspect'] as $option) {
+            $parameter = $option === 'aspect' ? 'aspect_ratio' : $option;
+
+            if ($this->option($option) && ! $this->capabilities->sendsParameter($parameter)) {
+                $this->components->warn(sprintf(
+                    '%s does not declare %s in payload_parameters, so --%s is ignored. '.
+                    'Add it to config/studio.php once the model page confirms the name.',
+                    $this->capabilities->label,
+                    $parameter,
+                    $option,
+                ));
+            }
+        }
+    }
+
+    /**
+     * The probe request, built from the model's own declared defaults so that
+     * what is captured is representative rather than arbitrary.
+     */
+    protected function clipRequest(): ClipRequest
+    {
+        return new ClipRequest(
+            prompt: (string) $this->option('prompt'),
+            durationSeconds: $this->duration(),
+            aspectRatio: $this->aspectRatio(),
+            resolution: $this->resolution(),
+
+            // FR-14 inverted: every narrated project mutes native audio, so the
+            // probe must too unless --audio is passed, or it captures a shape
+            // the pipeline will never ask for — at double the rate on Veo.
+            muteNativeAudio: ! $this->option('audio'),
+            modelKey: $this->capabilities->key,
+        );
+    }
+
+    protected function aspectRatio(): AspectRatio
+    {
+        $requested = (string) ($this->option('aspect') ?? '');
+
+        if ($requested === '') {
+            return $this->capabilities->aspectRatios[0];
         }
 
-        if ($aspect = $this->option('aspect')) {
-            $payload['aspect_ratio'] = (string) $aspect;
+        $ratio = AspectRatio::tryFrom($requested);
+
+        if ($ratio === null || ! $this->capabilities->supportsAspectRatio($ratio)) {
+            throw ProviderException::permanent(
+                sprintf(
+                    '%s does not declare aspect ratio %s. Declared: %s.',
+                    $this->capabilities->label,
+                    $requested,
+                    implode(', ', array_map(fn (AspectRatio $a) => $a->value, $this->capabilities->aspectRatios)),
+                ),
+                'fal',
+            );
         }
 
-        return $payload;
+        return $ratio;
+    }
+
+    protected function resolution(): VideoResolution
+    {
+        $requested = (string) ($this->option('resolution') ?? '');
+
+        if ($requested === '') {
+            return $this->capabilities->defaultResolution;
+        }
+
+        $resolution = VideoResolution::tryFrom($requested);
+
+        if ($resolution === null || ! $this->capabilities->supportsResolution($resolution)) {
+            throw ProviderException::permanent(
+                sprintf(
+                    '%s does not declare resolution %s. Declared: %s.',
+                    $this->capabilities->label,
+                    $requested,
+                    implode(', ', array_map(fn (VideoResolution $r) => $r->value, $this->capabilities->resolutions)),
+                ),
+                'fal',
+            );
+        }
+
+        return $resolution;
     }
 
     /**
@@ -257,29 +378,6 @@ class CaptureFalShapesCommand extends Command
         return $requested === null || $requested === ''
             ? $this->capabilities->minClipLengthSeconds()
             : (float) $requested;
-    }
-
-    /**
-     * Refuse a duration the model cannot render.
-     *
-     * Kling accepts 5 or 10 seconds and nothing between, so asking for 7 buys
-     * an error rather than a clip — and this command exists precisely to avoid
-     * spending money on an avoidable failure.
-     */
-    protected function validateDuration(): ?string
-    {
-        $duration = $this->duration();
-
-        if (in_array($duration, $this->capabilities->clipLengths, true)) {
-            return null;
-        }
-
-        return sprintf(
-            '%s renders %s second clips only; %s was requested.',
-            $this->capabilities->label,
-            implode(' or ', array_map(fn ($l) => rtrim(rtrim(number_format($l, 1), '0'), '.'), $this->capabilities->clipLengths)),
-            rtrim(rtrim(number_format($duration, 1), '0'), '.'),
-        );
     }
 
     /**

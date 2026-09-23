@@ -2,6 +2,9 @@
 
 namespace Tests\Feature;
 
+use App\Contracts\Data\ClipRequest;
+use App\Integrations\Fal\FalPayloadBuilder;
+use App\Services\Provider\ModelRegistry;
 use Tests\TestCase;
 
 /**
@@ -45,6 +48,31 @@ class CaptureFalShapesCommandTest extends TestCase
             ->assertSuccessful();
     }
 
+    public function test_it_warns_rather_than_silently_dropping_an_ignored_parameter(): void
+    {
+        // A silently dropped flag is worse than a refused one: you read the
+        // captured payload, see resolution missing, and conclude the model
+        // rejected it — a false finding bought with a real charge.
+        $this->artisan('studio:capture-fal-shapes', [
+            '--model' => 'kling-2-5-turbo-pro',
+            '--resolution' => '1080p',
+            '--dry-run' => true,
+        ])
+            ->expectsOutputToContain('--resolution is ignored')
+            ->assertSuccessful();
+    }
+
+    public function test_an_undeclared_aspect_ratio_is_refused_before_spending(): void
+    {
+        $this->artisan('studio:capture-fal-shapes', [
+            '--model' => 'kling-2-5-turbo-pro',
+            '--aspect' => '1:1',
+            '--dry-run' => true,
+        ])
+            ->expectsOutputToContain('does not declare aspect ratio 1:1')
+            ->assertFailed();
+    }
+
     public function test_it_does_send_the_audio_flag_to_a_model_that_has_one(): void
     {
         $this->artisan('studio:capture-fal-shapes', [
@@ -55,27 +83,56 @@ class CaptureFalShapesCommandTest extends TestCase
             ->assertSuccessful();
     }
 
-    public function test_it_omits_unconfirmed_parameters_by_default(): void
+    public function test_the_probe_sends_exactly_what_the_adapter_would_send(): void
     {
-        // Kling's accepted resolutions and ratios are unverified, so a first
-        // probe leaves them out entirely.
+        // The whole value of paying for this probe. A narrower payload would
+        // prove only that the probe worked, leaving the adapter free to 4xx on
+        // the first real render over a parameter that was never tested — after
+        // the money meant to rule that out had been spent.
+        $capabilities = app(ModelRegistry::class)->video('kling-2-5-turbo-pro');
+
+        $expected = app(FalPayloadBuilder::class)->build(
+            new ClipRequest(
+                prompt: 'A calm river at dawn, slow drifting mist',
+                durationSeconds: 5.0,
+                aspectRatio: $capabilities->aspectRatios[0],
+                resolution: $capabilities->defaultResolution,
+                modelKey: $capabilities->key,
+            ),
+            $capabilities,
+        );
+
         $this->artisan('studio:capture-fal-shapes', [
             '--model' => 'kling-2-5-turbo-pro',
             '--dry-run' => true,
         ])
-            ->doesntExpectOutputToContain('resolution')
-            ->doesntExpectOutputToContain('aspect_ratio')
+            ->expectsOutputToContain(json_encode($expected, JSON_UNESCAPED_SLASHES))
             ->assertSuccessful();
     }
 
-    public function test_it_sends_them_when_explicitly_asked(): void
+    public function test_unconfirmed_parameters_stay_off_the_wire(): void
+    {
+        // Kling declares only aspect_ratio. resolution and seed have
+        // unconfirmed names on that schema, and one unaccepted parameter
+        // fails the whole call.
+        $this->artisan('studio:capture-fal-shapes', [
+            '--model' => 'kling-2-5-turbo-pro',
+            '--dry-run' => true,
+        ])
+            ->doesntExpectOutputToContain('"resolution"')
+            ->doesntExpectOutputToContain('"seed"')
+            ->assertSuccessful();
+    }
+
+    public function test_minimal_bisects_by_dropping_back_to_prompt_and_duration(): void
     {
         $this->artisan('studio:capture-fal-shapes', [
             '--model' => 'kling-2-5-turbo-pro',
-            '--resolution' => '1080p',
+            '--minimal' => true,
             '--dry-run' => true,
         ])
-            ->expectsOutputToContain('1080p')
+            ->doesntExpectOutputToContain('aspect_ratio')
+            ->expectsOutputToContain('NOT what the adapter sends')
             ->assertSuccessful();
     }
 
