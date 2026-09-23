@@ -245,11 +245,19 @@ Stated plainly rather than left for you to discover:
    the assumption with a fixture.
 2. **No speech, music or SFX adapters.** Still blocked on PRD A1/A2 and a
    provider decision. `docs/PROVIDERS.md` gives the shape to implement.
-3. **Per-scene SFX (FR-13, Phase 2)** has an interface and a fake driver, but is
+3. **Character consistency (G2/FR-6) is reachable but unproven.** The
+   `kling-2-5-turbo-pro-i2v` entry wires the image-to-video path end to end,
+   but none of its four `VERIFY_IN_DASHBOARD` values was read from fal's model
+   page — see `docs/PROVIDER-RESEARCH.md` §8. It also declares image-to-video
+   *only*, so shots without a locked character cannot render on it; the project
+   page counts them and warns before anything is spent. **Per-shot model
+   selection** — text-to-video for uncharactered shots, image-to-video for the
+   rest — is the real answer and is not built.
+4. **Per-scene SFX (FR-13, Phase 2)** has an interface and a fake driver, but is
    not placed on the assembly timeline.
-4. **No polling/websockets.** Queued stages update on page refresh. This starts
+5. **No polling/websockets.** Queued stages update on page refresh. This starts
    to matter once real renders take minutes rather than seconds.
-5. **The `"Ai"` Laravel project (PRD D1/A5) was never inspected** — it was not
+6. **The `"Ai"` Laravel project (PRD D1/A5) was never inspected** — it was not
    reachable from the environment this was built in. Nothing here assumes the
    shape of its `usage_records` table; this project defines its own. If you do
    want to merge the two, that reconciliation is still open.

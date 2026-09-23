@@ -161,6 +161,28 @@ class ModelRegistry
             );
         }
 
+        // The mirror image, and the more serious of the two: a text-to-video-only
+        // model degrades (characters drift), but an image-to-video-only model
+        // cannot render an uncharactered shot at all. Counted here so the number
+        // is concrete before anything is spent, rather than arriving later as N
+        // failed shots.
+        if (! $capabilities->supportsMode(GenerationMode::TextToVideo)) {
+            $unrenderable = $project->shots()
+                ->whereDoesntHave('characters', fn ($q) => $q->whereNotNull('canonical_reference_asset_id'))
+                ->count();
+
+            if ($unrenderable > 0) {
+                $warnings[] = sprintf(
+                    '%s is image-to-video only, and %d shot(s) have no locked character '.
+                    'reference to start from. Those shots cannot be rendered on this model. '.
+                    'Lock a character onto them, or pin the project to a model that also '.
+                    'does text-to-video.',
+                    $capabilities->label,
+                    $unrenderable,
+                );
+            }
+        }
+
         if ($capabilities->emitsNativeAudio && ! $capabilities->supportsNativeAudioToggle) {
             $warnings[] = sprintf(
                 '%s generates its own audio and offers no way to turn it off, so the clip '.

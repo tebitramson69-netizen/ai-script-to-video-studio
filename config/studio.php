@@ -179,6 +179,73 @@ return [
             'payload_parameters' => ['aspect_ratio'],
         ],
 
+        // ── UNVERIFIED ────────────────────────────────────────────────────
+        // Kling's image-to-video sibling. This entry exists because without an
+        // image-to-video model, PRD G2/FR-6 character consistency cannot work
+        // at all — the verified text-to-video endpoint takes no starting frame.
+        //
+        // NOTHING HERE WAS READ FROM THE MODEL PAGE. Every value below is
+        // either derived from the verified text-to-video entry or set to a
+        // deliberately pessimistic placeholder. Read fal's model page and
+        // correct all four marked values together.
+        //
+        // The failure modes are asymmetric, which is why this is safe to ship
+        // unverified: a wrong endpoint or a wrong parameter name returns a 4xx
+        // and is NOT billed. A wrong price is billed. So the endpoint is a
+        // structural guess and the price is an over-estimate.
+        'kling-2-5-turbo-pro-i2v' => [
+            // The label reaches the project-creation dropdown, so the owner
+            // sees the caveat at the moment they choose. Drop 'UNVERIFIED'
+            // only when the four markers below are gone.
+            'label' => 'Kling 2.5 Turbo Pro — Image to Video (fal, UNVERIFIED)',
+
+            // VERIFY_IN_DASHBOARD (1/4): derived by substituting the last
+            // segment of the verified text-to-video id, not read anywhere. If
+            // it is wrong you get a free 404, and FAL_QUEUE_URL / this env var
+            // override it without a code change.
+            'endpoint' => env(
+                'STUDIO_KLING_I2V_ENDPOINT',
+                'fal-ai/kling-video/v2.5-turbo/pro/image-to-video',
+            ),
+
+            // Image-to-video ONLY. Deliberately not also declaring
+            // text_to_video: an i2v endpoint requires a starting image, and
+            // claiming otherwise would turn a free refusal into a paid error.
+            // The consequence — shots with no locked character cannot render
+            // on this model — is surfaced by ModelRegistry::degradationWarnings
+            // before anything is spent.
+            'modes' => ['image_to_video'],
+
+            // Inherited from the verified sibling. Same model, same tier; the
+            // duration ladder is a property of the model, not the conditioning.
+            // Still worth confirming — VERIFY_IN_DASHBOARD (2/4).
+            'clip_lengths' => [5, 10],
+
+            // VERIFY_IN_DASHBOARD (3/4), as on the text-to-video entry.
+            'resolutions' => ['720p', '1080p'],
+            'default_resolution' => '1080p',
+            'aspect_ratios' => ['16:9', '9:16'],
+
+            'supports_native_audio_toggle' => false,
+            'emits_native_audio' => false,
+
+            // VERIFY_IN_DASHBOARD (4/4) — and the one that costs money to get
+            // wrong. No image-to-video figure exists for this model in any
+            // source we have. Set to $0.20/s, the top of the third-party range
+            // quoted for Kling on fal (docs/PROVIDER-RESEARCH.md §2), under the
+            // over-estimate rule above.
+            //
+            // This is 2.9x the verified text-to-video rate and it is meant to
+            // sting: at $0.20/s a 64-second video is $12.80 against the $15
+            // default cap, leaving no room to regenerate a shot. The estimator
+            // will therefore refuse work that may well be affordable. That is
+            // the correct direction to be wrong in, and it is fixed by one
+            // number once the page is read.
+            'cost_per_second_usd' => 0.20,
+
+            'payload_parameters' => ['aspect_ratio'],
+        ],
+
         'veo-3-1-fast' => [
             'label' => 'Veo 3.1 Fast (fal)',
             'endpoint' => env('STUDIO_VEO_FAST_ENDPOINT', 'fal-ai/veo3.1/fast'),

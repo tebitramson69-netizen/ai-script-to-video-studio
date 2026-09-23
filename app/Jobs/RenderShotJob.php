@@ -3,11 +3,13 @@
 namespace App\Jobs;
 
 use App\Contracts\Data\ClipRequest;
+use App\Contracts\ProviderException;
 use App\Contracts\QueueableVideoGenerator;
 use App\Contracts\VideoGenerator;
 use App\Enums\AssetType;
 use App\Enums\GenerationMode;
 use App\Enums\ProjectStatus;
+use App\Enums\ProviderFailureReason;
 use App\Enums\ShotStatus;
 use App\Models\Shot;
 use App\Services\Cost\CostEstimator;
@@ -186,7 +188,28 @@ class RenderShotJob extends StudioJob
         // Fall back rather than fail: a model that cannot do image-to-video can
         // still render the shot from its prompt, and losing the reference is a
         // consistency problem, not a broken pipeline.
+        //
+        // But the fallback is only available if the model has it. An
+        // image-to-video-only model (Kling's i2v endpoint) cannot render a shot
+        // with no locked character at all, and silently rewriting the request
+        // to text-to-video would hand the adapter something the model refuses —
+        // turning a knowable, free failure into a provider round trip.
         if (! $capabilities->supportsMode($mode)) {
+            if (! $capabilities->supportsMode(GenerationMode::TextToVideo)) {
+                throw ProviderException::because(
+                    ProviderFailureReason::InvalidRequest,
+                    sprintf(
+                        '%s is image-to-video only and shot %d has no locked character '.
+                        'reference to start from, so it cannot be rendered on this model. '.
+                        'Lock a character onto the shot, or pin the project to a model that '.
+                        'also does text-to-video.',
+                        $capabilities->label,
+                        $shot->id,
+                    ),
+                    'pipeline',
+                );
+            }
+
             $mode = GenerationMode::TextToVideo;
             $reference = null;
         }

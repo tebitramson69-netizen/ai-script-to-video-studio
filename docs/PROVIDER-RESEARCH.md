@@ -385,11 +385,36 @@ Updated 22 Sep 2026. Steps 1 and 2 are done; what is left needs money.
 
 **Next**
 
-3. **Read the Kling image-to-video model page.** Its own model id, price,
-   durations and how it takes the reference image. Without this, character
-   consistency (PRD G2, FR-6) cannot work at all — the verified endpoint takes
-   no starting image, and the pipeline will render every shot from its prompt
-   alone. The project page warns about this now, but a warning is not a fix.
+3. **Read the Kling image-to-video model page** and correct four values.
+   A registry entry now exists — `kling-2-5-turbo-pro-i2v` — but **nothing in
+   it was read from the page.** It is there so the pipeline's image-to-video
+   path is built, tested and reachable; it is not there because the facts are
+   known. The four `VERIFY_IN_DASHBOARD` markers in `config/studio.php` are:
+
+   | # | Value | Currently | How it was arrived at |
+   |---|---|---|---|
+   | 1 | endpoint | `fal-ai/kling-video/v2.5-turbo/pro/image-to-video` | last segment of the verified t2v id, substituted |
+   | 2 | clip lengths | `[5, 10]` | inherited from the verified t2v sibling |
+   | 3 | resolutions / ratios | as t2v | same unverified state as t2v |
+   | 4 | **price** | **$0.20/s** | over-estimate: top of the third-party range (§2) |
+
+   Shipping it unverified is safe because the failure modes are asymmetric:
+   **a wrong endpoint or parameter name returns a 4xx and is not billed, while
+   a wrong price is billed.** So the endpoint is a structural guess and the
+   price errs high.
+
+   The price is the one to fix first. At $0.20/s — 2.9x the verified
+   text-to-video rate — a 64-second video is $12.80 against the $15 default
+   cap, leaving no room to regenerate a shot. The estimator will refuse work
+   that may well be affordable. That is the correct direction to be wrong in,
+   and one number fixes it.
+
+   Note also: the entry declares **image-to-video only**. Shots with no locked
+   character cannot render on it, which `ModelRegistry::degradationWarnings()`
+   now counts and reports on the project page before anything is spent. Pinning
+   a whole project to it is therefore only right when every shot has a locked
+   character. Per-shot model selection — text-to-video for uncharactered shots,
+   image-to-video for the rest — is the real answer and is not built.
 4. **Get a payment method that clears a USD charge from Cameroon.** The MTN
    MoMo Mastercard virtual card is the best-sourced option (§3). Fund the
    smallest top-up fal allows — that figure is still unverified, so read it off
