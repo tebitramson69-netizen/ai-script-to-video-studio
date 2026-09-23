@@ -248,18 +248,20 @@ Stated plainly rather than left for you to discover:
    see `docs/PROVIDER-RESEARCH.md` §10 for why fal rather than ElevenLabs
    directly, and why the cheaper model is the default. Like the video adapter
    it is tested only against faked HTTP. Music and SFX are still fakes.
-3. **Character consistency (G2/FR-6) is reachable but unproven.** The
+3. **Music and SFX have no real adapter**, and the script structurer is still a
+   heuristic rather than an LLM. Both are `docs/PROVIDERS.md` shape-only.
+4. **Character consistency (G2/FR-6) is reachable but unproven.** The
    `kling-2-5-turbo-pro-i2v` entry wires the image-to-video path end to end.
    Its endpoint, duration ladder and $0.07/s rate are corroborated by
    third-party sources (`docs/PROVIDER-RESEARCH.md` §9) but none has been read
    off the page by the account owner, so all of it is Tier B. fal.ai is
    unreachable from this codebase — every request is `EGRESS_BLOCKED` — so
    Tier A needs someone with an account.
-4. **Per-scene SFX (FR-13, Phase 2)** has an interface and a fake driver, but is
+5. **Per-scene SFX (FR-13, Phase 2)** has an interface and a fake driver, but is
    not placed on the assembly timeline.
-5. **No polling/websockets.** Queued stages update on page refresh. This starts
+6. **No polling/websockets.** Queued stages update on page refresh. This starts
    to matter once real renders take minutes rather than seconds.
-6. **The `"Ai"` Laravel project (PRD D1/A5) was never inspected** — it was not
+7. **The `"Ai"` Laravel project (PRD D1/A5) was never inspected** — it was not
    reachable from the environment this was built in. Nothing here assumes the
    shape of its `usage_records` table; this project defines its own. If you do
    want to merge the two, that reconciliation is still open.

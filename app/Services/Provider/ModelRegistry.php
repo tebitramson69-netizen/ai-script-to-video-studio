@@ -2,6 +2,7 @@
 
 namespace App\Services\Provider;
 
+use App\Contracts\Data\ImageModelCapabilities;
 use App\Contracts\Data\ModelCapabilities;
 use App\Contracts\Data\SpeechModelCapabilities;
 use App\Enums\AspectRatio;
@@ -24,6 +25,9 @@ class ModelRegistry
 
     /** @var array<string, SpeechModelCapabilities> */
     protected array $speechCache = [];
+
+    /** @var array<string, ImageModelCapabilities> */
+    protected array $imageCache = [];
 
     public function video(string $key): ModelCapabilities
     {
@@ -171,6 +175,39 @@ class ModelRegistry
     }
 
     /**
+     * Capabilities of one image model.
+     */
+    public function image(string $key): ImageModelCapabilities
+    {
+        if (isset($this->imageCache[$key])) {
+            return $this->imageCache[$key];
+        }
+
+        $config = config("studio.image_models.{$key}");
+
+        if (! is_array($config)) {
+            throw new InvalidArgumentException(
+                "Unknown image model '{$key}'. Registered: ".implode(', ', $this->availableImageKeys()).'.'
+            );
+        }
+
+        return $this->imageCache[$key] = ImageModelCapabilities::fromConfig($key, $config);
+    }
+
+    public function defaultImage(): ImageModelCapabilities
+    {
+        return $this->image((string) config('studio.default_image_model', 'fake'));
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function availableImageKeys(): array
+    {
+        return array_keys((array) config('studio.image_models', []));
+    }
+
+    /**
      * Capabilities of one text-to-speech model.
      */
     public function speech(string $key): SpeechModelCapabilities
@@ -274,6 +311,23 @@ class ModelRegistry
                 $capabilities->label,
                 $project->aspect_ratio->value,
                 $supported,
+            );
+        }
+
+        // The image model too, because character references are generated at
+        // the project's ratio and an image model that cannot produce it fails
+        // the character step — and, on an image-to-video shot, silently
+        // mis-frames the video that reference drives.
+        $image = $this->defaultImage();
+
+        if (! $image->supportsAspectRatio($project->aspect_ratio)) {
+            return sprintf(
+                '%s cannot produce %s character references. It supports %s. '.
+                'Character consistency needs a reference in the project\'s shape, because '.
+                'an image-to-video shot inherits its framing from the starting frame.',
+                $image->label,
+                $project->aspect_ratio->value,
+                $image->imageSizes === [] ? 'none' : implode(', ', array_keys($image->imageSizes)),
             );
         }
 

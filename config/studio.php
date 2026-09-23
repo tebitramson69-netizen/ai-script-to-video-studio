@@ -7,6 +7,7 @@ use App\Integrations\Fake\FakeScriptStructurer;
 use App\Integrations\Fake\FakeSoundEffectGenerator;
 use App\Integrations\Fake\FakeSpeechSynthesizer;
 use App\Integrations\Fake\FakeVideoGenerator;
+use App\Integrations\Fal\FalImageGenerator;
 use App\Integrations\Fal\FalSpeechSynthesizer;
 use App\Integrations\Fal\FalVideoGenerator;
 
@@ -43,6 +44,9 @@ return [
         ],
         'image_generator' => [
             'fake' => FakeImageGenerator::class,
+
+            // Any fal-hosted image model, chosen by studio.default_image_model.
+            'fal' => FalImageGenerator::class,
         ],
         'video_generator' => [
             'fake' => FakeVideoGenerator::class,
@@ -397,6 +401,67 @@ return [
     ],
 
     'default_speech_model' => env('STUDIO_SPEECH_MODEL', 'fake'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Image models
+    |--------------------------------------------------------------------------
+    |
+    | Character reference candidates (FR-5). Three per character by default, so
+    | a three-character project is nine images — cents against a ~$4.48 video.
+    | Price is not the constraint here; two other things are.
+    |
+    | 1. SEED. A locked reference must be reproducible (PRD §10.2, NFR-5), so
+    |    the model has to honour a seed and the adapter has to send it.
+    | 2. SHAPE. The locked reference IS the framing for every image-to-video
+    |    shot built from it, because that endpoint takes no aspect_ratio of its
+    |    own. FLUX takes a size PRESET rather than width and height, so the
+    |    project's ratio is translated through `image_sizes` — and a wrong entry
+    |    there mis-frames every character shot in the video.
+    |
+    | Tier B: read from search summaries of fal's model pages on 23 Sep 2026.
+    | See docs/PROVIDER-RESEARCH.md §11.
+    |
+    */
+
+    'image_models' => [
+
+        'fake' => [
+            'label' => 'Fake image generator (local, free)',
+            'endpoint' => null,
+            'image_sizes' => ['16:9' => 'landscape_16_9', '9:16' => 'portrait_16_9', '1:1' => 'square_hd'],
+            'cost_per_image_usd' => 0.0,
+        ],
+
+        // Default. Fast, the cheapest of the FLUX line, and it honours a seed —
+        // which is the requirement that actually matters, because a reference
+        // that cannot be reproduced cannot be re-locked.
+        'flux-schnell' => [
+            'label' => 'FLUX.1 [schnell] (fal)',
+            'endpoint' => env('STUDIO_FLUX_ENDPOINT', 'fal-ai/flux/schnell'),
+
+            // The documented preset names. Anything not listed here is refused
+            // rather than substituted.
+            'image_sizes' => [
+                '16:9' => 'landscape_16_9',
+                '9:16' => 'portrait_16_9',
+                '1:1' => 'square_hd',
+            ],
+
+            // VERIFY_IN_DASHBOARD: sources disagree between $0.003/megapixel
+            // and $0.008 for a 1024x1024. The higher figure is used under the
+            // over-estimate rule; at nine images that is $0.072 against $0.027,
+            // so the difference cannot threaten a run either way.
+            'cost_per_image_usd' => 0.008,
+
+            // seed is sent because reproducibility is the point of this step.
+            // image_size is sent because the shape is inherited by every
+            // image-to-video shot. Nothing else is.
+            'payload_parameters' => ['seed', 'image_size'],
+        ],
+    ],
+
+    'default_image_model' => env('STUDIO_IMAGE_MODEL', 'fake'),
 
     /*
     |--------------------------------------------------------------------------

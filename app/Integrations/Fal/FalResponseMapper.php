@@ -29,6 +29,16 @@ class FalResponseMapper
     protected const STATUS_KEYS = ['status', 'state'];
 
     /** Dotted paths, most specific first. */
+    protected const IMAGE_PATHS = [
+        'images.0.url',
+        'image.url',
+        'output.images.0.url',
+        'data.images.0.url',
+        'image_url',
+        'url',
+    ];
+
+    /** Dotted paths, most specific first. */
     protected const AUDIO_PATHS = [
         'audio.url',
         'output.audio.url',
@@ -172,6 +182,37 @@ class FalResponseMapper
         }
 
         return null;
+    }
+
+    /**
+     * The generated image.
+     *
+     * @param  array<string, mixed>  $body
+     */
+    public function imageUrl(array $body): ?string
+    {
+        $flat = $this->flatten($body);
+
+        foreach (self::IMAGE_PATHS as $path) {
+            $value = $flat[$path] ?? null;
+
+            if (is_string($value) && str_starts_with($value, 'http')) {
+                return $value;
+            }
+        }
+
+        foreach ($flat as $value) {
+            if (is_string($value) && str_starts_with($value, 'http') && $this->looksLikeImage($value)) {
+                return $value;
+            }
+        }
+
+        return null;
+    }
+
+    protected function looksLikeImage(string $url): bool
+    {
+        return (bool) preg_match('/\.(png|jpe?g|webp|avif)(\?|#|$)/i', $url);
     }
 
     /**

@@ -155,6 +155,17 @@ it would let a shot carrying `fake` be costed at zero on a project pinned to
 something expensive, which is the exact hole the budget cap exists to close.
 `CostEstimator::capabilitiesFor()` applies the same rule; keep them in step.
 
+## A character reference's shape is the video's shape
+
+`image_models.*.image_sizes` maps an aspect ratio onto the provider's size
+preset (FLUX takes `landscape_16_9`, not width and height). Treat it as
+load-bearing, not cosmetic: Kling's image-to-video endpoint takes no
+`aspect_ratio` and inherits the framing of its starting frame, and the locked
+character reference *is* that frame. A reference generated in the wrong shape
+mis-frames every character shot in the finished video, at full price, with
+nothing saying so. A ratio a model does not declare is refused, never
+substituted.
+
 ## Speech models are chosen by language
 
 `studio.speech_models` is the sibling of `video_models`, and one entry may
