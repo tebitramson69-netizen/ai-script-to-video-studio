@@ -165,6 +165,58 @@ class SceneCastAttributionTest extends TestCase
             ->once();
     }
 
+    public function test_warnings_are_stored_on_the_project_so_the_page_can_show_them(): void
+    {
+        // A warning in a log file cannot change a decision: the person who needs
+        // to know the cast is empty is looking at the project page.
+        $project = $this->parse($this->project('Water moves through three states.'));
+
+        $this->assertNotEmpty($project->structurer_warnings);
+        $this->assertStringContainsString(
+            'No characters were detected',
+            implode(' ', $project->structurer_warnings),
+        );
+    }
+
+    public function test_a_clean_parse_stores_null_rather_than_an_empty_array(): void
+    {
+        // Null reads as "nothing to say"; an empty array invites a view to render
+        // an empty warning block.
+        $project = $this->parse($this->project(
+            "Long ago Ada lived beside the river. The boy Kofi lived upstream.\n\n".
+            'The boy Kofi mended his nets while the water rose.'
+        ));
+
+        $this->assertNull($project->structurer_warnings);
+    }
+
+    public function test_re_parsing_replaces_warnings_rather_than_accumulating_them(): void
+    {
+        // They describe one parse. A project fixed by editing its script should
+        // stop showing the warning that prompted the edit.
+        $project = $this->project('Water moves through three states.');
+        $this->parse($project);
+
+        $this->assertNotEmpty($project->fresh()->structurer_warnings);
+
+        $project->forceFill([
+            'script' => 'Long ago Ada lived beside the river. The boy Kofi lived upstream.',
+        ])->save();
+
+        $this->assertNull($this->parse($project->fresh())->structurer_warnings);
+    }
+
+    public function test_the_project_page_shows_a_structurer_warning(): void
+    {
+        $project = $this->parse($this->project('Water moves through three states.'));
+
+        $this->actingAs($project->user)
+            ->get(route('projects.show', $project))
+            ->assertOk()
+            ->assertSee('Check the breakdown.')
+            ->assertSee('No characters were detected', false);
+    }
+
     public function test_deleting_a_scene_does_not_leave_orphaned_pivot_rows(): void
     {
         $project = $this->parse($this->project('Long ago Ada lived beside the river.'));

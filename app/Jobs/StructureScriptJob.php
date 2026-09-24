@@ -79,11 +79,16 @@ class StructureScriptJob extends StudioJob
             }
         });
 
-        // Warnings are the structurer telling the owner where it was unsure —
-        // an empty cast, a scene list that hit the cap. Logged rather than
-        // dropped: computing them and discarding them would be the same mistake
-        // as the discarded scene attribution this job now persists. Surfacing
-        // them in the UI is the obvious next step and is not built.
+        // Warnings are the structurer telling the owner where it was unsure — an
+        // empty cast, a scene list that hit the cap. Stored on the project so the
+        // project page can show them, because a warning in a log file cannot
+        // change a decision: the person who needs to know the cast is empty is
+        // looking at the page, not at storage/logs. Logged as well, for whoever
+        // is reading logs rather than the UI.
+        $project->forceFill([
+            'structurer_warnings' => $breakdown->warnings === [] ? null : $breakdown->warnings,
+        ])->save();
+
         foreach ($breakdown->warnings as $warning) {
             Log::info('Script structurer warning', [
                 'project_id' => $project->getKey(),

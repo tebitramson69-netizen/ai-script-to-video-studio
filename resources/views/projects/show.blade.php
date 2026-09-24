@@ -33,6 +33,16 @@
         </form>
     </div>
 
+    {{-- What the structurer was unsure about when it parsed the script. Shown
+         first because these are the earliest correctable thing: editing the
+         scene list or the cast now costs nothing, and every later stage builds
+         on them (FR-3, FR-4). --}}
+    @foreach ($project->structurer_warnings ?? [] as $warning)
+        <div class="flash flash-budget">
+            <strong>Check the breakdown.</strong> {{ $warning }}
+        </div>
+    @endforeach
+
     {{-- Capability gaps: the render will succeed but produce something other
          than what the PRD promises. Shown before the pipeline because the
          decision they force is "should I pay for this at all?". --}}

@@ -178,10 +178,13 @@ Stated so nobody discovers them by surprise:
 - **`action` is extracted, not authored.** It collects parentheticals and slug
   line remainders; it does not invent stage direction.
 - **Dialogue is narrated, not performed** (§4).
-- **Warnings are logged, not shown.** `StructureScriptJob` writes each one to the
-  log with the project id. They are not yet surfaced on the project page, which
-  is where they would actually change a decision. That is the next obvious
-  increment and is deliberately not in v1.
+Warnings **are** surfaced: `StructureScriptJob` stores them on
+`projects.structurer_warnings` and the project page renders them above the
+capability warnings, because editing the scene list or cast is the earliest and
+cheapest correction available (FR-3, FR-4). They are replaced on every re-parse
+rather than accumulated, since they describe one parse — a project fixed by
+editing its script stops showing the warning that prompted the edit. They are
+also logged, for whoever reads logs rather than the UI.
 
 Every one of these is a reason to add an LLM driver later. None of them is a
 reason to add one now: the owner reviews and edits the breakdown before a single

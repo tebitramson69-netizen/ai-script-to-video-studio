@@ -17,7 +17,7 @@ class Project extends Model
     use HasFactory;
 
     protected $fillable = [
-        'user_id', 'title', 'script', 'aspect_ratio', 'status', 'language',
+        'user_id', 'title', 'script', 'structurer_warnings', 'aspect_ratio', 'status', 'language',
         'voice_id', 'video_model', 'video_model_i2v', 'music_mood', 'budget_cap_usd',
         'final_asset_id', 'exported_at',
     ];
@@ -28,6 +28,7 @@ class Project extends Model
             'status' => ProjectStatus::class,
             'aspect_ratio' => AspectRatio::class,
             'budget_cap_usd' => 'decimal:2',
+            'structurer_warnings' => 'array',
             'exported_at' => 'datetime',
         ];
     }
