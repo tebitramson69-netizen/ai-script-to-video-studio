@@ -8,6 +8,7 @@ use App\Integrations\Fake\FakeSpeechSynthesizer;
 use App\Integrations\Fake\FakeVideoGenerator;
 use App\Integrations\Fal\FalImageGenerator;
 use App\Integrations\Fal\FalMusicGenerator;
+use App\Integrations\Fal\FalSoundEffectGenerator;
 use App\Integrations\Fal\FalSpeechSynthesizer;
 use App\Integrations\Fal\FalVideoGenerator;
 use App\Integrations\Local\HeuristicScriptStructurer;
@@ -81,6 +82,9 @@ return [
         ],
         'sound_effect_generator' => [
             'fake' => FakeSoundEffectGenerator::class,
+
+            // Any fal-hosted sound-effect model, chosen by studio.default_sfx_model.
+            'fal' => FalSoundEffectGenerator::class,
         ],
     ],
 
@@ -613,6 +617,119 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Sound effect models
+    |--------------------------------------------------------------------------
+    |
+    | One effect per scene that has a cue (FR-13). Two things shape this registry,
+    | and neither is price.
+    |
+    | LENGTH. Every SFX model has a hard ceiling far below a scene's length —
+    | 22 seconds on the default, against scenes that routinely run 30 or 40. So
+    | an effect under a whole scene has to repeat, and an effect that was not
+    | GENERATED to loop has an audible seam every time it does. That is why a
+    | model with a real loop flag was preferred: `supports_loop` is sent when the
+    | scene outruns the ceiling, and the seam stops existing rather than being
+    | hidden.
+    |
+    | FALSE POSITIVES. The cost question here is not "how long?" but "how many
+    | scenes?", and every scene with a cue is a charge. A cue that should not
+    | have been there is money spent on a sound that does not belong in the
+    | video — worse than no effect at all, because someone has to notice it and
+    | ask for a re-render. Cue detection is therefore a closed keyword map
+    | (HeuristicScriptStructurer::SFX_CUES) and no match means no cue, no
+    | request, and no charge.
+    |
+    | Tier B: read from search summaries of fal's and ElevenLabs' model pages on
+    | 24 Sep 2026, not from a live account. See docs/PROVIDER-RESEARCH.md §13.
+    |
+    */
+
+    'sfx_models' => [
+
+        'fake' => [
+            'label' => 'Fake sound effects (local noise burst, free)',
+            'endpoint' => null,
+
+            // The local generator synthesises any length, so nothing loops and
+            // the positioned mix is exercised at full scene length in tests.
+            'max_duration_seconds' => 600.0,
+            'supports_loop' => false,
+        ],
+
+        // The default when the fal driver is bound. Chosen on schema clarity
+        // rather than price, because at $0.0194 an effect the price cannot
+        // decide anything: a six-scene video is 12 cents against a ~$4.48 run.
+        //
+        // What it wins on is that its schema is documented and specific —
+        // duration_seconds is a real range (0.5-22) and passing null lets the
+        // MODEL choose the natural length of the sound, which is better than our
+        // guess for a one-shot like a door slam. And it has a genuine `loop`
+        // flag, which is the only honest way to cover a scene longer than 22
+        // seconds.
+        'elevenlabs-sfx-v2' => [
+            'label' => 'ElevenLabs Sound Effects V2 (fal)',
+            'endpoint' => env('STUDIO_ELEVENLABS_SFX_ENDPOINT', 'fal-ai/elevenlabs/sound-effects/v2'),
+
+            'cost_per_effect_usd' => 0.0194,
+
+            'min_duration_seconds' => 0.5,
+            'max_duration_seconds' => 22.0,
+
+            // 'text', not 'prompt'. Getting this wrong is a 422 that reads like
+            // a wrong URL.
+            'prompt_parameter' => 'text',
+            'duration_parameter' => 'duration_seconds',
+
+            'supports_loop' => true,
+
+            // prompt_influence defaults to 0.3, which is deliberately loose.
+            // Ambience under narration wants the sound that was ASKED for, not a
+            // creative interpretation of it, so this is raised — but only
+            // because the field and its 0-1 range are documented.
+            'payload_defaults' => [
+                'prompt_influence' => 0.6,
+            ],
+
+            'payload_parameters' => [],
+        ],
+
+        // Registered as the alternative with the same licensed provenance as the
+        // music default: Stable Audio 3's corpus is AudioSparx-licensed plus
+        // Freesound CC, and the small SFX checkpoint is the sound-design member
+        // of that family.
+        //
+        // Not the default: its price is not published on the pages reachable
+        // from here, it has no documented loop flag, and its field names are
+        // assumed from the medium text-to-audio model rather than read. All
+        // three are reasons to keep it one env var away rather than in the path.
+        'stable-audio-3-sfx' => [
+            'label' => 'Stable Audio 3 Small SFX (fal)',
+            'endpoint' => env('STUDIO_STABLE_AUDIO_SFX_ENDPOINT', 'fal-ai/stable-audio-3/small/sfx/text-to-audio'),
+
+            // VERIFY_IN_DASHBOARD: unpublished. Set deliberately high under the
+            // over-estimate rule so the cap refuses a run rather than
+            // overspending on one; correct it downward once the page can be read.
+            'cost_per_effect_usd' => 0.05,
+
+            'min_duration_seconds' => 1.0,
+            'max_duration_seconds' => 30.0,
+
+            // VERIFY_IN_DASHBOARD: assumed from the medium text-to-audio model,
+            // which takes 'prompt' and 'duration'. Not read off this model's own
+            // page.
+            'prompt_parameter' => 'prompt',
+            'duration_parameter' => 'duration',
+
+            'supports_loop' => false,
+            'payload_defaults' => [],
+            'payload_parameters' => [],
+        ],
+    ],
+
+    'default_sfx_model' => env('STUDIO_SFX_MODEL', 'fake'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Fake driver pricing
     |--------------------------------------------------------------------------
     |
@@ -663,6 +780,11 @@ return [
 
         // Steady-state music level relative to narration, in dB.
         'music_bed_db' => (float) env('STUDIO_MUSIC_BED_DB', -6.0),
+
+        // Sound effects sit below the music, not alongside it. Ambience is
+        // meant to be noticed only if you listen for it; music carries the mood,
+        // and both are ducked under the narration by the same sidechain.
+        'sfx_bed_db' => (float) env('STUDIO_SFX_BED_DB', -12.0),
 
         'tts_cost_per_1k_chars_usd' => (float) env('STUDIO_TTS_COST_PER_1K', 0.08),
         'music_cost_per_minute_usd' => (float) env('STUDIO_MUSIC_COST_PER_MIN', 0.30),

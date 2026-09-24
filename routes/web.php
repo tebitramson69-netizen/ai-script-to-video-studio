@@ -58,6 +58,7 @@ Route::middleware('auth')->group(function () {
         Route::post('/export', [PipelineController::class, 'export'])->name('pipeline.export');
         Route::post('/audio/narration', [PipelineController::class, 'regenerateNarration'])->name('pipeline.narration.regenerate');
         Route::post('/audio/music', [PipelineController::class, 'regenerateMusic'])->name('pipeline.music.regenerate');
+        Route::post('/audio/sfx', [PipelineController::class, 'regenerateSoundEffects'])->name('pipeline.sfx.regenerate');
 
         // NFR-7 retention.
         Route::post('/purge', [PipelineController::class, 'purgeIntermediates'])->name('pipeline.purge');

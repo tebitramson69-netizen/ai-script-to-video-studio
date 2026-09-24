@@ -9,6 +9,7 @@ use App\Jobs\FinalizeAudioJob;
 use App\Jobs\GenerateCharacterCandidatesJob;
 use App\Jobs\GenerateMusicJob;
 use App\Jobs\GenerateNarrationJob;
+use App\Jobs\GenerateSoundEffectsJob;
 use App\Jobs\PlanShotsJob;
 use App\Jobs\RenderShotJob;
 use App\Jobs\StructureScriptJob;
@@ -129,6 +130,13 @@ class PipelineRunner
         Bus::chain([
             new GenerateNarrationJob($project->getKey(), $force),
             new GenerateMusicJob($project->getKey(), $force),
+
+            // After music, because both are sized against the same timeline and
+            // sound effects are the cheaper of the two to lose if the budget cap
+            // stops the chain here. A no-op on the usual script, where the
+            // structurer found no ambience to cue.
+            new GenerateSoundEffectsJob($project->getKey(), $force),
+
             new FinalizeAudioJob($project->getKey()),
         ])->dispatch();
     }
@@ -165,6 +173,28 @@ class PipelineRunner
 
         Bus::chain([
             new GenerateMusicJob($project->getKey(), force: true),
+            new FinalizeAudioJob($project->getKey()),
+        ])->dispatch();
+    }
+
+    /**
+     * FR-15: regenerate the per-scene sound effects on their own.
+     *
+     * Separate from music because the two go wrong for different reasons. Music
+     * comes back with the wrong mood for the whole video; an effect comes back
+     * wrong for one scene, usually because the cue that produced it was a false
+     * positive. Re-running the effects alone lets that be fixed by editing the
+     * cue without paying for the music again.
+     *
+     * @throws BudgetExceededException
+     */
+    public function regenerateSoundEffects(Project $project): void
+    {
+        $this->costs->assertWithinBudget($project);
+        $this->stateMachine->audioInvalidated($project);
+
+        Bus::chain([
+            new GenerateSoundEffectsJob($project->getKey(), force: true),
             new FinalizeAudioJob($project->getKey()),
         ])->dispatch();
     }

@@ -2,6 +2,8 @@
 
 namespace App\Services\Media;
 
+use App\Enums\AssetType;
+use App\Models\Asset;
 use App\Models\Project;
 use App\Models\Shot;
 use Illuminate\Support\Collection;
@@ -47,7 +49,7 @@ class VideoAssembler
             $silentVideo = $this->concatenate($normalised, $workDir);
             $videoDuration = $this->ffmpeg->durationSeconds($silentVideo);
 
-            $audio = $this->buildAudioBed($project, $workDir, $videoDuration);
+            $audio = $this->buildAudioBed($project, $shots, $workDir, $videoDuration);
 
             $output = $workDir.'/final.mp4';
             $this->mux($silentVideo, $audio, $output);
@@ -155,81 +157,218 @@ class VideoAssembler
     }
 
     /**
-     * FR-20: narration and music on one timeline, music ducked under narration.
+     * FR-20: narration, music and per-scene sound effects on one timeline, with
+     * everything ducked under the narration.
      *
-     * Ducking uses sidechaincompress keyed on the narration track rather than a
-     * fixed volume envelope. It costs nothing extra here and it keeps working in
-     * Phase 2/3 when narration stops having gapless coverage — a hard-coded
-     * envelope would have to be rewritten then.
+     * Built compositionally rather than as a branch per combination. The earlier
+     * version had three explicit paths (music only, narration only, both); adding
+     * effects would have made it eight, and the eighth would have been the one
+     * nobody tested. Instead each source contributes one filter chain and one
+     * label, the labels are mixed, and the mix is ducked if there is a narration
+     * to duck against. Two sources or ten, it is the same code.
+     *
+     * Ducking still uses sidechaincompress keyed on the narration rather than a
+     * fixed volume envelope: it costs nothing extra and it keeps working when
+     * narration stops having gapless coverage.
+     *
+     * @param  Collection<int, Shot>  $shots  the rendered shots, in timeline order
      */
-    protected function buildAudioBed(Project $project, string $workDir, float $videoDuration): ?string
+    protected function buildAudioBed(Project $project, $shots, string $workDir, float $videoDuration): ?string
     {
         $narration = $project->narrationAsset();
         $music = $project->musicAsset();
+        $effects = $this->positionedEffects($project, $shots);
 
-        if ($narration === null && $music === null) {
+        if ($narration === null && $music === null && $effects === []) {
             return null;
         }
 
-        $output = $workDir.'/audio.wav';
-        $bedGain = $this->dbToLinear((float) config('studio.audio.music_bed_db', -6.0));
-        $duckRatio = $this->duckRatio((float) config('studio.audio.music_duck_db', -12.0));
+        $length = round($videoDuration, 3);
+        $fadeFrom = max(0.0, $length - 1);
+        $inputs = [];
+        $chains = [];
+        $bedLabels = [];
+        $index = 0;
 
-        // Music only.
-        if ($narration === null) {
-            $this->ffmpeg->run([
-                '-stream_loop', '-1', '-i', $music->absolutePath(),
-                '-t', (string) round($videoDuration, 3),
-                '-af', sprintf('volume=%.4f,afade=t=out:st=%.3f:d=1', $bedGain, max(0.0, $videoDuration - 1)),
-                '-ac', '2', '-ar', '44100',
-                $output,
-            ]);
+        // Narration first, so it is input 0 and reads as the spine of the graph
+        // that it is.
+        if ($narration !== null) {
+            $inputs[] = ['-i', $narration->absolutePath()];
 
-            return $output;
+            // Split only when there is something to duck. An asplit whose second
+            // output goes nowhere is not a harmless extra — ffmpeg refuses the
+            // whole graph over an unconnected pad.
+            $needsKey = $music !== null || $effects !== [];
+
+            $chains[] = sprintf(
+                '[%d:a]aformat=channel_layouts=stereo,aresample=44100,apad,atrim=0:%.3f%s',
+                $index,
+                $length,
+                $needsKey ? ',asplit=2[vo][key]' : '[vo]',
+            );
+            $index++;
         }
 
-        // Narration only: pad with silence so the audio spans the whole video.
-        if ($music === null) {
-            $this->ffmpeg->run([
-                '-i', $narration->absolutePath(),
-                '-af', 'apad',
-                '-t', (string) round($videoDuration, 3),
-                '-ac', '2', '-ar', '44100',
-                $output,
-            ]);
-
-            return $output;
+        if ($music !== null) {
+            // Looped, because the bed may be shorter than the video: the music
+            // model has a ceiling and the timeline does not.
+            $inputs[] = ['-stream_loop', '-1', '-i', $music->absolutePath()];
+            $chains[] = sprintf(
+                '[%d:a]aformat=channel_layouts=stereo,aresample=44100,atrim=0:%.3f,volume=%.4f[bed%d]',
+                $index,
+                $length,
+                $this->dbToLinear((float) config('studio.audio.music_bed_db', -6.0)),
+                $index,
+            );
+            $bedLabels[] = "[bed{$index}]";
+            $index++;
         }
 
-        // Both: duck the music under the narration.
-        $filter = sprintf(
-            // Narration: to stereo, padded to the full length, and split — one
-            // copy is mixed, the other is the sidechain key.
-            '[0:a]aformat=channel_layouts=stereo,aresample=44100,apad,atrim=0:%1$.3f,asplit=2[vo][key];'.
-            // Music: looped to length, dropped to the bed level.
-            '[1:a]aformat=channel_layouts=stereo,aresample=44100,atrim=0:%1$.3f,volume=%2$.4f[bed];'.
-            // Duck the bed whenever the key is loud.
-            '[bed][key]sidechaincompress=threshold=0.03:ratio=%3$.1f:attack=20:release=400:makeup=1[ducked];'.
+        $sfxGain = $this->dbToLinear((float) config('studio.audio.sfx_bed_db', -12.0));
+
+        foreach ($effects as $effect) {
+            // Looped for the same reason as the music, and more often: the
+            // default model generates at most 22 seconds against scenes that
+            // routinely run longer.
+            $inputs[] = ['-stream_loop', '-1', '-i', $effect['path']];
+
+            $chains[] = sprintf(
+                '[%d:a]aformat=channel_layouts=stereo,aresample=44100,atrim=0:%2$.3f,volume=%3$.4f,'.
+                // Short fades at both ends of the scene. Without them an ambience
+                // that starts or stops mid-waveform clicks, and a click at every
+                // scene boundary is more noticeable than the ambience itself.
+                'afade=t=in:d=0.3,afade=t=out:st=%4$.3f:d=0.5,'.
+                // The whole reason effects need positioning: this one belongs to
+                // one scene, not to the video.
+                'adelay=%5$d:all=1[bed%1$d]',
+                $index,
+                $effect['span'],
+                $sfxGain,
+                max(0.0, $effect['span'] - 0.5),
+                (int) round($effect['offset'] * 1000),
+            );
+            $bedLabels[] = "[bed{$index}]";
+            $index++;
+        }
+
+        $bed = match (count($bedLabels)) {
+            0 => null,
+            1 => $bedLabels[0],
+            default => $this->mixBeds($chains, $bedLabels),
+        };
+
+        if ($narration !== null && $bed !== null) {
+            $chains[] = sprintf(
+                '%s[key]sidechaincompress=threshold=0.03:ratio=%.1f:attack=20:release=400:makeup=1[ducked]',
+                $bed,
+                $this->duckRatio((float) config('studio.audio.music_duck_db', -12.0)),
+            );
+
             // normalize=0: keep narration at unity instead of halving both.
-            '[vo][ducked]amix=inputs=2:duration=first:normalize=0,'.
-            'afade=t=out:st=%4$.3f:d=1,alimiter=limit=0.95[out]',
-            round($videoDuration, 3),
-            $bedGain,
-            $duckRatio,
-            max(0.0, $videoDuration - 1),
-        );
+            $chains[] = sprintf(
+                '[vo][ducked]amix=inputs=2:duration=first:normalize=0,'.
+                'afade=t=out:st=%.3f:d=1,alimiter=limit=0.95[out]',
+                $fadeFrom,
+            );
+        } elseif ($narration !== null) {
+            $chains[] = sprintf('[vo]afade=t=out:st=%.3f:d=1,alimiter=limit=0.95[out]', $fadeFrom);
+        } else {
+            // No voice to duck against, so the beds are the whole track. Padded
+            // because a delayed effect need not reach the end of the video.
+            $chains[] = sprintf(
+                '%sapad,atrim=0:%.3f,afade=t=out:st=%.3f:d=1,alimiter=limit=0.95[out]',
+                $bed,
+                $length,
+                $fadeFrom,
+            );
+        }
+
+        $output = $workDir.'/audio.wav';
 
         $this->ffmpeg->run([
-            '-i', $narration->absolutePath(),
-            '-stream_loop', '-1', '-i', $music->absolutePath(),
-            '-filter_complex', $filter,
+            ...array_merge(...$inputs),
+            '-filter_complex', implode(';', $chains),
             '-map', '[out]',
-            '-t', (string) round($videoDuration, 3),
+            '-t', (string) $length,
             '-ac', '2', '-ar', '44100',
             $output,
         ]);
 
         return $output;
+    }
+
+    /**
+     * @param  list<string>  $chains
+     * @param  list<string>  $bedLabels
+     */
+    protected function mixBeds(array &$chains, array $bedLabels): string
+    {
+        // duration=longest rather than first: an effect belonging to the last
+        // scene starts late, and "first" would cut the mix at whichever bed
+        // happened to be listed first.
+        $chains[] = sprintf(
+            '%samix=inputs=%d:duration=longest:normalize=0[beds]',
+            implode('', $bedLabels),
+            count($bedLabels),
+        );
+
+        return '[beds]';
+    }
+
+    /**
+     * Each scene's sound effect, with where it sits on the finished timeline.
+     *
+     * Offsets are accumulated from the RENDERED shots the assembler is actually
+     * laying down, not from the scene list. Those differ whenever a shot failed
+     * or is stale, and taking the scene list would drift every effect after the
+     * gap — an effect landing in the wrong scene is worse than no effect, because
+     * it sounds deliberate.
+     *
+     * @param  Collection<int, Shot>  $shots
+     * @return list<array{path: string, offset: float, span: float}>
+     */
+    protected function positionedEffects(Project $project, $shots): array
+    {
+        $byScene = $project->assets()
+            ->where('type', AssetType::SoundEffect)
+            ->whereNotNull('scene_id')
+            ->get()
+            ->keyBy('scene_id');
+
+        if ($byScene->isEmpty()) {
+            return [];
+        }
+
+        $offsets = [];
+        $spans = [];
+        $elapsed = 0.0;
+
+        foreach ($shots as $shot) {
+            $sceneId = $shot->scene_id;
+            $duration = $shot->timelineDurationSeconds();
+
+            $offsets[$sceneId] ??= $elapsed;
+            $spans[$sceneId] = ($spans[$sceneId] ?? 0.0) + $duration;
+            $elapsed += $duration;
+        }
+
+        $effects = [];
+
+        foreach ($spans as $sceneId => $span) {
+            $asset = $byScene->get($sceneId);
+
+            if (! $asset instanceof Asset || ! $asset->exists() || $span <= 0) {
+                continue;
+            }
+
+            $effects[] = [
+                'path' => $asset->absolutePath(),
+                'offset' => round($offsets[$sceneId], 3),
+                'span' => round($span, 3),
+            ];
+        }
+
+        return $effects;
     }
 
     /**

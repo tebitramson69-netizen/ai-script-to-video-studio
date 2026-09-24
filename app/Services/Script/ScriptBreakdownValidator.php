@@ -30,6 +30,13 @@ class ScriptBreakdownValidator
 
     public const MAX_CHARACTERS = 6;
 
+    /**
+     * A cue is sent to a provider as a prompt, so it is capped like the setting.
+     * Shorter, because a sound-effect prompt that runs on reads as a scene
+     * description and the model renders the wrong thing.
+     */
+    public const MAX_SFX_CUE_LENGTH = 120;
+
     public function validate(ScriptBreakdown $breakdown): ScriptBreakdown
     {
         $this->validateShape($breakdown);
@@ -140,6 +147,25 @@ class ScriptBreakdownValidator
 
         if (trim($scene->narration) === '') {
             throw new LogicException("{$where} has empty narration; there would be nothing to narrate.");
+        }
+
+        // Null means "no ambience in this scene" and is the common, safe case.
+        // An empty or blank string does not: it would reach the generator as a
+        // prompt, be refused there at best, and at worst buy whatever the model
+        // imagines. A structurer that means "no cue" must say null.
+        if ($scene->sfxCue !== null) {
+            if (trim($scene->sfxCue) === '') {
+                throw new LogicException(
+                    "{$where} carries a blank sfxCue. Use null for a scene with no ambience — ".
+                    'a blank cue would be sent to the provider as a prompt and paid for.'
+                );
+            }
+
+            if (mb_strlen($scene->sfxCue) > self::MAX_SFX_CUE_LENGTH) {
+                throw new LogicException(
+                    "{$where} sfxCue exceeds ".self::MAX_SFX_CUE_LENGTH.' characters.'
+                );
+            }
         }
 
         if ($scene->narration !== trim($scene->narration)) {

@@ -55,6 +55,9 @@ malformed breakdown reaching the pipeline.
 - `characterNames` — a list of strings, each one **present in the breakdown's
   `characters`** (referential integrity), no duplicates, in first-appearance
   order
+- `sfxCue` — `null`, or a non-blank trimmed string of ≤ 120 characters. **Never
+  the empty string**: `null` means "this scene has no ambience" and `''` would
+  reach the sound-effect provider as a prompt and be paid for
 
 **Every `CharacterDraft`**
 - `name` — non-empty, canonicalised (`Ucfirst` of lowercase), ≤ 40 characters
@@ -68,6 +71,16 @@ malformed breakdown reaching the pipeline.
 - the `setting` label
 - the `action` line
 - the character `description`
+- **whether a scene has an `sfxCue` at all, and which one**
+
+`sfxCue` is the one heuristic whose false positives cost money directly: effects
+are billed per effect, so every cue is a charge, and a cue in a scene that names
+no sound buys something that does not belong in the video. It is therefore the
+only label here that **never falls back to a default** — `setting` returns
+"Scene 3" because a scene must render somewhere, but a cue returns `null`, and
+`null` is the common case. Matching is whole-word against a closed map of
+sustained ambience (rain, market, river, fire, crowd…), so "firewood" does not
+cue a fire and "brainstorm" does not cue a storm.
 
 The distinction matters: downstream code may rely on the guarantees without
 checking. It must not rely on the heuristics being *right* — only on them being

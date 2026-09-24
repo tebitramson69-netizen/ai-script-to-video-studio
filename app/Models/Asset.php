@@ -13,7 +13,7 @@ class Asset extends Model
     use HasFactory;
 
     protected $fillable = [
-        'project_id', 'type', 'disk', 'path', 'mime', 'bytes',
+        'project_id', 'scene_id', 'type', 'disk', 'path', 'mime', 'bytes',
         'duration_seconds', 'model', 'cost_usd', 'meta',
     ];
 
@@ -30,6 +30,17 @@ class Asset extends Model
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
+    }
+
+    /**
+     * The scene this asset belongs to, for the assets that belong to one.
+     *
+     * Null for narration and music, which cover the whole video. Set for a sound
+     * effect, because the assembler has to know where on the timeline to put it.
+     */
+    public function scene(): BelongsTo
+    {
+        return $this->belongsTo(Scene::class);
     }
 
     /**

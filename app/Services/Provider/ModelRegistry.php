@@ -5,6 +5,7 @@ namespace App\Services\Provider;
 use App\Contracts\Data\ImageModelCapabilities;
 use App\Contracts\Data\ModelCapabilities;
 use App\Contracts\Data\MusicModelCapabilities;
+use App\Contracts\Data\SoundEffectModelCapabilities;
 use App\Contracts\Data\SpeechModelCapabilities;
 use App\Enums\AspectRatio;
 use App\Enums\GenerationMode;
@@ -32,6 +33,9 @@ class ModelRegistry
 
     /** @var array<string, MusicModelCapabilities> */
     protected array $musicCache = [];
+
+    /** @var array<string, SoundEffectModelCapabilities> */
+    protected array $soundEffectCache = [];
 
     public function video(string $key): ModelCapabilities
     {
@@ -242,6 +246,39 @@ class ModelRegistry
     public function availableMusicKeys(): array
     {
         return array_keys((array) config('studio.music_models', []));
+    }
+
+    /**
+     * Capabilities of one sound-effect model.
+     */
+    public function soundEffect(string $key): SoundEffectModelCapabilities
+    {
+        if (isset($this->soundEffectCache[$key])) {
+            return $this->soundEffectCache[$key];
+        }
+
+        $config = config("studio.sfx_models.{$key}");
+
+        if (! is_array($config)) {
+            throw new InvalidArgumentException(
+                "Unknown sound effect model '{$key}'. Registered: ".implode(', ', $this->availableSoundEffectKeys()).'.'
+            );
+        }
+
+        return $this->soundEffectCache[$key] = SoundEffectModelCapabilities::fromConfig($key, $config);
+    }
+
+    public function defaultSoundEffect(): SoundEffectModelCapabilities
+    {
+        return $this->soundEffect((string) config('studio.default_sfx_model', 'fake'));
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function availableSoundEffectKeys(): array
+    {
+        return array_keys((array) config('studio.sfx_models', []));
     }
 
     /**

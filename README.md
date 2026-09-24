@@ -297,13 +297,14 @@ Stated plainly rather than left for you to discover:
    written to tolerate being wrong — it finds the output by structure as well as
    by name. Run `studio:capture-fal-shapes` against a funded account to replace
    the assumption with a fixture.
-2. **Video, narration, character images and music have real adapters; SFX does
-   not.** `FalSpeechSynthesizer` renders narration on any fal-hosted TTS model,
-   defaulting to Kokoro (`docs/PROVIDER-RESEARCH.md` §10 — why fal rather than
-   ElevenLabs directly, and why the cheaper model is the default);
-   `FalImageGenerator` generates character references on FLUX (§11); and
-   `FalMusicGenerator` generates the background bed, defaulting to Stable Audio 3
-   Medium (§12). All four are tested only against faked HTTP.
+2. **Every capability now has a real adapter.** `FalSpeechSynthesizer` renders
+   narration on any fal-hosted TTS model, defaulting to Kokoro
+   (`docs/PROVIDER-RESEARCH.md` §10 — why fal rather than ElevenLabs directly, and
+   why the cheaper model is the default); `FalImageGenerator` generates character
+   references on FLUX (§11); `FalMusicGenerator` generates the background bed,
+   defaulting to Stable Audio 3 Medium (§12); and `FalSoundEffectGenerator`
+   generates one ambience effect per cued scene, defaulting to ElevenLabs Sound
+   Effects V2 (§13). All five are tested only against faked HTTP.
 3. **Music is the only capability where the model choice moves the budget.**
    The spread across fal's music models is ~125× for the same job, and the
    expensive ones generate *songs* — vocals that fight the narrator (FR-14) and
@@ -322,9 +323,12 @@ Stated plainly rather than left for you to discover:
    off the page by the account owner, so all of it is Tier B. fal.ai is
    unreachable from this codebase — every request is `EGRESS_BLOCKED` — so
    Tier A needs someone with an account.
-6. **SFX is the one capability with no real adapter.** It has an interface and a
-   fake driver, and `docs/PROVIDERS.md` gives the shape, but nothing is placed on
-   the assembly timeline — per-scene SFX is Phase 2 in the PRD regardless.
+6. **SFX generates ambience, not one-shots.** Every cue in the closed map is a
+   *sustained* sound, laid across its whole scene and looped to cover it. A
+   one-shot placed at a moment *inside* a scene ("the door slams at 0:14") needs
+   positioning within a scene rather than at it, and that stays Phase 2. Most
+   scripts cue few scenes or none, which is by design: a cue is a charge, and a
+   false positive is a sound that does not belong in the video.
 7. **No polling/websockets.** Queued stages update on page refresh. This starts
    to matter once real renders take minutes rather than seconds.
 8. **The `"Ai"` Laravel project (PRD D1/A5) was never inspected** — it was not

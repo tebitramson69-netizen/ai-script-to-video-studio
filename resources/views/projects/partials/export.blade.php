@@ -5,7 +5,7 @@
         <div class="row-actions">
             <form method="POST" action="{{ route('pipeline.audio', $project) }}" class="inline">
                 @csrf
-                <button class="btn" type="submit">Generate narration + music</button>
+                <button class="btn" type="submit">Generate narration + music + SFX</button>
             </form>
             <form method="POST" action="{{ route('pipeline.export', $project) }}" class="inline">
                 @csrf
@@ -41,6 +41,25 @@
                 </form>
             @else
                 <span class="muted">not generated</span>
+            @endif
+        </li>
+        {{-- FR-13: one ambience effect per scene that carries a cue. Most scripts
+             cue few scenes or none, so this row states both numbers — an owner
+             seeing "0 of 6" knows the structurer heard nothing rather than that
+             the stage failed. --}}
+        <li>
+            Sound effects:
+            @php($cuedScenes = $project->scenes()->whereNotNull('sfx_cue')->where('sfx_cue', '!=', '')->count())
+            @php($effects = $project->assets()->where('type', \App\Enums\AssetType::SoundEffect)->count())
+            @if ($cuedScenes === 0)
+                <span class="muted">no scene cues ambience</span>
+            @else
+                {{ $effects }} of {{ $cuedScenes }} cued scene(s)
+                <span class="muted small">(ducked under narration at {{ config('studio.audio.sfx_bed_db') }} dB)</span>
+                <form method="POST" action="{{ route('pipeline.sfx.regenerate', $project) }}" class="inline">
+                    @csrf
+                    <button class="btn small" type="submit">Regenerate</button>
+                </form>
             @endif
         </li>
     </ul>

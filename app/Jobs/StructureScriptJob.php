@@ -62,6 +62,7 @@ class StructureScriptJob extends StudioJob
                     'narration' => $draft->narration,
                     'mood' => $draft->mood->value,
                     'action' => $draft->action,
+                    'sfx_cue' => $draft->sfxCue,
                 ]);
 
                 // The structurer's attribution is persisted, not recomputed

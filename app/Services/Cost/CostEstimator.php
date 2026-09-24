@@ -5,7 +5,9 @@ namespace App\Services\Cost;
 use App\Contracts\Data\ModelCapabilities;
 use App\Contracts\ImageGenerator;
 use App\Contracts\MusicGenerator;
+use App\Contracts\SoundEffectGenerator;
 use App\Contracts\SpeechSynthesizer;
+use App\Enums\AssetType;
 use App\Enums\ShotStatus;
 use App\Exceptions\BudgetExceededException;
 use App\Models\Project;
@@ -30,6 +32,7 @@ class CostEstimator
         protected ImageGenerator $image,
         protected SpeechSynthesizer $speech,
         protected MusicGenerator $music,
+        protected SoundEffectGenerator $soundEffects,
         protected NarrationEstimator $estimator,
         protected ModelRegistry $models,
     ) {}
@@ -98,6 +101,21 @@ class CostEstimator
                 $lineItems['Music ('.$this->formatSeconds($seconds).')'] =
                     $this->music->costForSeconds($seconds);
             }
+        }
+
+        // Only the scenes that carry a cue and do not already have an effect.
+        // Counting every scene would inflate the estimate on a script the
+        // structurer found no ambience in — which is most of them — and an
+        // estimate that is routinely too high is one the owner learns to ignore.
+        $pendingEffects = $project->scenes()
+            ->whereNotNull('sfx_cue')
+            ->where('sfx_cue', '!=', '')
+            ->whereDoesntHave('assets', fn ($q) => $q->where('type', AssetType::SoundEffect))
+            ->count();
+
+        if ($pendingEffects > 0) {
+            $lineItems["Sound effects ({$pendingEffects} scene(s))"] =
+                $pendingEffects * $this->soundEffects->costPerEffectUsd();
         }
 
         return new CostEstimate(

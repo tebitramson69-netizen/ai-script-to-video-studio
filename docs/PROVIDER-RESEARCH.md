@@ -810,6 +810,121 @@ confirming first because both cost a 422 mid-run rather than money:
 
 ---
 
+## 13. Per-scene sound effects, 24 Sep 2026
+
+The last capability, and the one where the research changed what got built.
+
+### What the code said before the models did
+
+`SoundEffectGenerator` existed, was bound in `StudioServiceProvider`, and was
+called **by nothing**. No job, no cost line, no cue source, and `assets` had no
+`scene_id` to position an effect with. Building only the adapter would have
+produced the exact failure this project has already corrected twice — a signal
+computed and then discarded (`SceneDraft::characterNames`, then the structurer's
+`warnings`). It would have looked finished and been inert.
+
+So the deliverable was the vertical slice: cue → effect → position on the
+timeline. The PRD's "Phase 2" on SFX is a sequencing note, and everything ahead
+of it in the sequence is now built.
+
+### The models
+
+| Model | Price | Length | Notable |
+| --- | --- | --- | --- |
+| **ElevenLabs Sound Effects V2** | **$0.0194 per effect**, flat | `duration_seconds` 0.5–22, null lets the model choose | **a real `loop` flag**; `prompt_influence` 0–1 (default 0.3) |
+| Stable Audio 3 Small SFX | unpublished on fal | variable | 459M params, on-device oriented, same licensed corpus as the music default |
+
+ElevenLabs is the default on **schema clarity, not price**. At $0.0194 an effect
+the price cannot decide anything — a six-scene video is 12 cents against a ~$4.48
+run. What it wins on is that its input schema is documented and specific, and
+that it has a genuine loop flag.
+
+### The 22-second ceiling is the design constraint
+
+Scenes routinely run 30–40 seconds; the default model generates at most 22. So an
+effect under a whole scene **has to repeat**, and an effect that was not
+*generated* to loop has an audible seam every time it wraps — under the
+narration, at a predictable interval, which is exactly where a listener notices
+it.
+
+`loop: true` is therefore sent **only when the effect is actually going to
+repeat**. Sent unconditionally it would constrain the sound the model produces
+for a one-shot that fits its scene, buying nothing.
+
+### The expensive failure is a false positive, not an expensive model
+
+This inverts the usual cost reasoning. Effects are billed per effect, so the bill
+is *the number of scenes with cues* — and a cue that should not have been there is
+money spent on a sound that does not belong in the video. That is worse than
+silence: it sounds deliberate, so someone has to notice it, diagnose it, and ask
+for the render again.
+
+Three consequences, all of them refusals:
+
+- Cue detection is a **closed keyword map** (`HeuristicScriptStructurer::SFX_CUES`,
+  whole-word matched) and **never falls back**. Unlike `setting`, which returns
+  "Scene 3" because a scene must render somewhere, a cue returns `null` — and
+  `null` is the common case.
+- Every entry in the map is **sustained ambience**. A one-shot there (a gunshot, a
+  slammed door) would buy 22 seconds of it looped under the narration: the
+  woodpecker failure. One-shots placed at a moment *inside* a scene stay Phase 2,
+  because they need positioning within a scene rather than at it.
+- `ScriptBreakdownValidator` rejects a **blank** cue. The difference between
+  `null` and `''` is the difference between "this scene has no ambience" and "buy
+  me whatever you imagine", and only one of them is free.
+
+### Offsets come from the rendered shots, not the scene list
+
+An effect is the first asset in this pipeline whose place on the timeline is not
+"the whole video", so the assembler has to know where its scene starts. It
+accumulates offsets from the **rendered shots it is actually laying down**. Taking
+the scene list instead would drift every effect after any unrendered or stale shot
+— and an effect landing in the wrong scene is worse than no effect, because it
+sounds intentional.
+
+The spans come out shorter than the planned shot lengths, which is correct and
+worth stating: narration is the master clock, so the assembler trims to it
+(FR-18). An ambience sized to the *planned* length overruns the cut it belongs to.
+
+### The audio graph had to stop being a branch per combination
+
+`buildAudioBed()` had three explicit paths (music only, narration only, both).
+Adding effects would have made it eight, and the eighth would have been the one
+nobody tested. It is now compositional: each source contributes one filter chain
+and one label, the labels are mixed, and the mix is ducked if there is a narration
+to duck against. Two sources or ten, same code.
+
+Two details that only show up when you run it:
+
+- **`asplit` with an unused output fails the whole graph.** ffmpeg refuses an
+  unconnected pad, so the narration is split into a mix copy and a sidechain key
+  *only* when there is actually a bed to duck.
+- **`amix=duration=longest` for the beds**, not `first`. An effect belonging to the
+  last scene starts late, and `first` would cut the mix at whichever bed happened
+  to be listed first.
+
+Effects sit at `sfx_bed_db` (−12 dB) — below the music bed at −6, both ducked by
+the same sidechain. Ambience should be noticed only if you listen for it; music
+carries the mood.
+
+### A Laravel testing trap worth recording
+
+`Http::fake()` **merges** stubs rather than replacing them, and a faked response
+body is a stream that can only be read once. A test that generates twice hits the
+spent stream of the first stub and sees an empty download that looks like a
+provider bug. Stub with closures — `fn () => Http::response(...)` — and each call
+gets a fresh body.
+
+### Tier
+
+Tier B — search summaries of fal's and ElevenLabs' model pages, 24 Sep 2026.
+fal.ai remains `EGRESS_BLOCKED`. Worth confirming first: Stable Audio 3 Small
+SFX's price and field names (all three assumed from the medium text-to-audio
+model, which is why it is not the default), and whether `loop` behaves as
+documented on a 22-second generation.
+
+---
+
 ---
 
 ## Sources
@@ -901,3 +1016,14 @@ Music models, 24 Sep 2026 — search summaries; fal.ai is egress-blocked:
 - https://blog.dubspot.com/stable-audio-3-review
 - https://byteiota.com/stable-audio-3-developer-guide/
 - https://docs.comfy.org/tutorials/audio/stable-audio/stable-audio-3
+
+Sound effect models, 24 Sep 2026 — search summaries; fal.ai is egress-blocked:
+- https://fal.ai/models/fal-ai/elevenlabs/sound-effects/v2 *(blocked; indexed)*
+- https://fal.ai/models/fal-ai/elevenlabs/sound-effects/v2/api *(blocked; indexed)*
+- https://fal.ai/models/fal-ai/stable-audio-3/small/sfx/text-to-audio *(blocked; indexed)*
+- https://fal.ai/explore/elevenlabs *(blocked; indexed)*
+- https://huggingface.co/stabilityai/stable-audio-3-small-sfx
+- https://elevenlabs.io/docs/api-reference/text-to-sound-effects/convert
+- https://elevenlabs.io/docs/overview/capabilities/sound-effects
+- https://unifically.com/blogs/elevenlabs
+- https://layer.ai/models/elevenlabs-sound-effects

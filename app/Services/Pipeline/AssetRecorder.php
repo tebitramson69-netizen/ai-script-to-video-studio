@@ -6,6 +6,7 @@ use App\Contracts\Data\GeneratedMedia;
 use App\Enums\AssetType;
 use App\Models\Asset;
 use App\Models\Project;
+use App\Models\Scene;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -22,6 +23,10 @@ class AssetRecorder
 {
     /**
      * @param  string  $operation  e.g. 'video.clip', 'speech.narration' — matches usage_records.operation
+     * @param  Scene|null  $scene  the scene this asset belongs to, for the assets that belong to one.
+     *                             Narration and music cover the whole video and leave this null; a
+     *                             sound effect sets it, because the assembler has to know where on
+     *                             the timeline to place it.
      */
     public function record(
         Project $project,
@@ -30,6 +35,7 @@ class AssetRecorder
         string $operation,
         string $provider,
         ?int $durationMs = null,
+        ?Scene $scene = null,
     ): Asset {
         $disk = config('studio.disk', 'local');
         $extension = pathinfo($media->path, PATHINFO_EXTENSION) ?: 'bin';
@@ -55,9 +61,10 @@ class AssetRecorder
         @unlink($media->path);
 
         return DB::transaction(function () use (
-            $project, $type, $media, $operation, $provider, $durationMs, $disk, $path, $bytes
+            $project, $type, $media, $operation, $provider, $durationMs, $disk, $path, $bytes, $scene
         ) {
             $asset = $project->assets()->create([
+                'scene_id' => $scene?->getKey(),
                 'type' => $type,
                 'disk' => $disk,
                 'path' => $path,

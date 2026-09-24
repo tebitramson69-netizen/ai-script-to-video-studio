@@ -9,10 +9,10 @@ a working adapter — read it as the worked example rather than starting from th
 sketch below. Its unverified parts are confined to `FalResponseMapper` and
 explained in `docs/PROVIDER-RESEARCH.md` §8.
 
-Speech, character images and music now have working fal adapters too
-(`FalSpeechSynthesizer`, `FalImageGenerator`, `FalMusicGenerator`), each reading
-its own registry in `config/studio.php`. **Sound effects are the only capability
-left without one.**
+Speech, character images, music and sound effects now have working fal adapters
+too (`FalSpeechSynthesizer`, `FalImageGenerator`, `FalMusicGenerator`,
+`FalSoundEffectGenerator`), each reading its own registry in `config/studio.php`.
+**Every capability has a real adapter.**
 
 Nothing here contains a speculative HTTP client for ElevenLabs or Replicate:
 their request and response shapes change, and a confidently-wrong payload is
@@ -153,7 +153,7 @@ provider call is made server-side from a queued job.
 | `VideoGenerator` | one clip per shot | `supportedClipLengths()` must be truthful — the timing engine depends on it |
 | `SpeechSynthesizer` | narration | Return the **measured** duration, not the requested one — it is the master clock |
 | `MusicGenerator` | one background bed | Instrumental — a sung line fights the narrator and ducking cannot fix it. Cost is a function of duration (`costForSeconds`), because some models bill flat per request |
-| `SoundEffectGenerator` | per-scene SFX (Phase 2) | Not yet on the assembly timeline |
+| `SoundEffectGenerator` | one ambience effect per cued scene | Billed per effect, so a cue that should not exist is the expensive failure. Never invent one |
 
 ## Rules every adapter must follow
 

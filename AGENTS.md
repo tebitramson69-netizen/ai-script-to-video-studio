@@ -125,8 +125,8 @@ pattern to copy, and the reason for that structure matters:
   dependency error before a single request is made, and no unit test catches it
   because they all construct the adapters by hand.
 - `FalVideoGenerator`, `FalSpeechSynthesizer`, `FalImageGenerator`,
-  `FalMusicGenerator` — the pipeline-facing adapters, one per capability, each
-  reading its own registry in `config/studio.php`.
+  `FalMusicGenerator`, `FalSoundEffectGenerator` — the pipeline-facing adapters,
+  one per capability, each reading its own registry in `config/studio.php`.
 
 `ProviderFailureReason` ties retryability to the reason so the two cannot
 disagree. Retrying a 402 waits for money that will not appear; not retrying a
@@ -231,6 +231,41 @@ where an unsupported capability is quietly accommodated, and that is deliberate.
 Field *names* are config, not constants (`prompt_parameter`,
 `duration_parameter`): audio models disagree about them, and
 `duration_parameter: null` means the model takes no length and none is invented.
+
+## Sound effects: the cue is the expensive part
+
+`studio.sfx_models` is the fifth registry, and SFX inverts the cost reasoning used
+everywhere else in this codebase. Effects are billed **per effect** ($0.0194 on the
+default), so the bill is *how many scenes carry a cue* — not how long anything is.
+The expensive failure is therefore not an expensive model, it is a **false
+positive**: a cue in a scene that names no sound buys something that does not
+belong in the finished video, and that is worse than silence because it sounds
+deliberate and someone has to ask for the render again.
+
+So the cue never falls back. `HeuristicScriptStructurer::SFX_CUES` is a closed,
+whole-word-matched map and a scene with no match gets `null` — which is the common
+case. `ScriptBreakdownValidator` rejects a *blank* cue for the same reason: `''`
+would reach the provider as a prompt. Do not add a default, and do not add a
+one-shot (a gunshot, a slammed door) to that map — every entry must be **sustained
+ambience**, because the mix loops an effect across its whole scene and a looped
+one-shot is a woodpecker.
+
+The other constraint is length: the default model caps at 22 seconds against scenes
+that run longer, so `loop: true` is sent **only when the effect will actually
+repeat**. An effect not generated to loop seams every time it wraps, right under
+the narration.
+
+An effect is also the first asset here whose place on the timeline is not "the
+whole video". `VideoAssembler::positionedEffects()` accumulates offsets from the
+**rendered shots**, never the scene list — one unrendered shot would otherwise
+drift every effect after it into the wrong scene.
+
+`buildAudioBed()` is compositional on purpose: one filter chain and one label per
+source, mixed, then ducked if there is narration to duck against. It used to be a
+branch per combination, and effects would have made that eight branches. Two
+ffmpeg details to preserve: an `asplit` whose second output goes nowhere fails the
+whole graph (so narration is only split when there is a bed), and the beds mix uses
+`duration=longest` because an effect in the last scene starts late.
 
 ## Timing: narration is the master clock
 

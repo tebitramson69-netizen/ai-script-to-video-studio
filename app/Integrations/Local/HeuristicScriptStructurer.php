@@ -67,6 +67,7 @@ class HeuristicScriptStructurer implements ScriptStructurer
                 mood: $this->moodFor($segment->narration),
                 action: $segment->action,
                 characterNames: $this->cast->namesIn($segment, $names),
+                sfxCue: $this->sfxCueFor($segment->narration),
             );
         }
 
@@ -162,6 +163,44 @@ class HeuristicScriptStructurer implements ScriptStructurer
         return "Scene {$position}";
     }
 
+    /**
+     * The ambience this scene's prose actually names, or null.
+     *
+     * Deliberately unlike settingFor(), which always returns something: that
+     * falls back to "Scene 3" because a scene must have a setting to render at
+     * all. A cue must NOT fall back, because every cue is a paid request
+     * ($0.0194 an effect) and a cue nobody asked for is a sound that does not
+     * belong in the video — worse than silence, because someone has to notice it
+     * and ask for the render again.
+     *
+     * The map is narrow on purpose. Every entry is SUSTAINED ambience that can
+     * sit under a whole scene, because that is what the v1 mix does: one effect
+     * per scene, laid at the scene's offset and looped to cover it. One-shots
+     * placed at a moment inside a scene ("the door slams at 0:14") need
+     * positioning within the scene rather than at it, and that is Phase 2.
+     *
+     * Highest score wins rather than first match, so a scene that mentions both
+     * rain and a market gets whichever the prose leans on. Ties go to map order,
+     * which makes the result stable across runs (NFR-5).
+     */
+    protected function sfxCueFor(string $narration): ?string
+    {
+        $lower = mb_strtolower($narration);
+        $best = null;
+        $bestScore = 0;
+
+        foreach (self::SFX_CUES as $cue => $keywords) {
+            $score = $this->countKeywords($lower, $keywords);
+
+            if ($score > $bestScore) {
+                $best = $cue;
+                $bestScore = $score;
+            }
+        }
+
+        return $best;
+    }
+
     protected function moodFor(string $narration): SceneMood
     {
         $lower = mb_strtolower($narration);
@@ -204,6 +243,30 @@ class HeuristicScriptStructurer implements ScriptStructurer
     }
 
     /** @var array<string, list<string>> setting label => trigger words */
+    /**
+     * Ambience cue => the words that justify it.
+     *
+     * Every value is a phrase written to be sent to a sound-effect model as-is,
+     * and every one describes a CONTINUOUS sound. Adding a one-shot here (a
+     * gunshot, a slammed door) would buy 22 seconds of it looped under the
+     * narration, which is the woodpecker failure — see sfxCueFor().
+     *
+     * @var array<string, list<string>>
+     */
+    protected const SFX_CUES = [
+        'steady rainfall with distant thunder' => ['rain', 'rainfall', 'downpour', 'storm', 'thunder'],
+        'a busy open-air market, overlapping voices and haggling' => ['market', 'marketplace', 'traders', 'stalls'],
+        'a flowing river with birdsong' => ['river', 'stream', 'waterfall', 'brook'],
+        'wind moving through tall trees' => ['forest', 'woods', 'jungle'],
+        'ocean waves breaking on a shore' => ['sea', 'ocean', 'waves', 'shore'],
+        'night insects and distant frogs' => ['crickets', 'insects', 'frogs'],
+        'a crackling open fire' => ['fire', 'flames', 'campfire', 'bonfire', 'embers'],
+        'city traffic with distant horns' => ['traffic', 'horns', 'lorries', 'highway'],
+        'a crowd of people talking in the open air' => ['crowd', 'crowds', 'gathering'],
+        'hand drums and clapping at a celebration' => ['drums', 'drumming', 'dancing', 'festival'],
+        'steady rain on a tin roof' => ['tin roof'],
+    ];
+
     protected const SETTING_KEYWORDS = [
         'a dense forest' => ['forest', 'trees', 'woods', 'jungle', 'bush'],
         'a village' => ['village', 'compound', 'hut', 'huts', 'settlement'],

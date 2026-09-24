@@ -38,6 +38,7 @@ class ScriptBreakdownValidatorTest extends TestCase
             mood: $overrides['mood'] ?? SceneMood::Neutral,
             action: $overrides['action'] ?? null,
             characterNames: $overrides['characterNames'] ?? [],
+            sfxCue: $overrides['sfxCue'] ?? null,
         );
     }
 
@@ -45,6 +46,34 @@ class ScriptBreakdownValidatorTest extends TestCase
     {
         $this->expectException(LogicException::class);
         $this->expectExceptionMessageMatches('/'.preg_quote($fragment, '/').'/i');
+    }
+
+    public function test_a_blank_sfx_cue_is_rejected_because_null_is_how_you_say_no_ambience(): void
+    {
+        // A blank cue would reach the generator as a prompt and be paid for. The
+        // distinction between null and '' is the difference between "this scene
+        // has no ambience" and "buy me whatever you imagine".
+        $this->expectRejection('blank sfxCue');
+
+        $this->validator->validate(new ScriptBreakdown(scenes: [$this->scene(['sfxCue' => '   '])]));
+    }
+
+    public function test_an_over_long_sfx_cue_is_rejected(): void
+    {
+        // A sound-effect prompt that runs on reads as a scene description, and the
+        // model renders the wrong thing at full price.
+        $this->expectRejection('exceeds 120 characters');
+
+        $this->validator->validate(new ScriptBreakdown(scenes: [
+            $this->scene(['sfxCue' => str_repeat('rain on a tin roof, ', 12)]),
+        ]));
+    }
+
+    public function test_a_null_sfx_cue_is_the_normal_case_and_passes(): void
+    {
+        $breakdown = $this->validator->validate(new ScriptBreakdown(scenes: [$this->scene()]));
+
+        $this->assertNull($breakdown->scenes[0]->sfxCue);
     }
 
     public function test_a_well_formed_breakdown_passes_through_unchanged(): void

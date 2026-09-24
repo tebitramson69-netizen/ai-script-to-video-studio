@@ -66,7 +66,7 @@ class PipelineController extends Controller
 
         return $this->guarded(
             fn () => $this->runner->generateAudio($project),
-            'Generating narration and music.',
+            'Generating narration, music and sound effects.',
         );
     }
 
@@ -98,6 +98,17 @@ class PipelineController extends Controller
         return $this->guarded(
             fn () => $this->runner->regenerateMusic($project),
             'Regenerating music.',
+        );
+    }
+
+    /** FR-15: regenerate the per-scene sound effects on their own. */
+    public function regenerateSoundEffects(Project $project): RedirectResponse
+    {
+        $this->authorize('generate', $project);
+
+        return $this->guarded(
+            fn () => $this->runner->regenerateSoundEffects($project),
+            'Regenerating sound effects.',
         );
     }
 
