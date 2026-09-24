@@ -93,10 +93,10 @@ class CostEstimator
         }
 
         if ($project->musicAsset() === null) {
-            $minutes = $this->estimatedRuntimeSeconds($project) / 60;
-            if ($minutes > 0) {
-                $lineItems['Music ('.$this->formatSeconds($minutes * 60).')'] =
-                    $minutes * $this->music->costPerMinuteUsd();
+            $seconds = $this->estimatedRuntimeSeconds($project);
+            if ($seconds > 0) {
+                $lineItems['Music ('.$this->formatSeconds($seconds).')'] =
+                    $this->music->costForSeconds($seconds);
             }
         }
 

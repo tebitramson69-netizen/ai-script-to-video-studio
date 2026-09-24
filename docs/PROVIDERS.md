@@ -9,11 +9,15 @@ a working adapter — read it as the worked example rather than starting from th
 sketch below. Its unverified parts are confined to `FalResponseMapper` and
 explained in `docs/PROVIDER-RESEARCH.md` §8.
 
-Speech, music and sound effects still have no real adapter. Nothing here
-contains a speculative HTTP client for ElevenLabs or Replicate: their request
-and response shapes change, and a confidently-wrong payload is harder to debug
-than an unwritten one. **Check the provider's current docs, then implement
-against the interface below.**
+Speech, character images and music now have working fal adapters too
+(`FalSpeechSynthesizer`, `FalImageGenerator`, `FalMusicGenerator`), each reading
+its own registry in `config/studio.php`. **Sound effects are the only capability
+left without one.**
+
+Nothing here contains a speculative HTTP client for ElevenLabs or Replicate:
+their request and response shapes change, and a confidently-wrong payload is
+harder to debug than an unwritten one. **Check the provider's current docs, then
+implement against the interface below.**
 
 ---
 
@@ -148,7 +152,7 @@ provider call is made server-side from a queued job.
 | `ImageGenerator` | character reference candidates | Deterministic given a seed, so a reference can be reproduced |
 | `VideoGenerator` | one clip per shot | `supportedClipLengths()` must be truthful — the timing engine depends on it |
 | `SpeechSynthesizer` | narration | Return the **measured** duration, not the requested one — it is the master clock |
-| `MusicGenerator` | one background track | Must cover the requested duration |
+| `MusicGenerator` | one background bed | Instrumental — a sung line fights the narrator and ducking cannot fix it. Cost is a function of duration (`costForSeconds`), because some models bill flat per request |
 | `SoundEffectGenerator` | per-scene SFX (Phase 2) | Not yet on the assembly timeline |
 
 ## Rules every adapter must follow

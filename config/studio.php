@@ -7,6 +7,7 @@ use App\Integrations\Fake\FakeSoundEffectGenerator;
 use App\Integrations\Fake\FakeSpeechSynthesizer;
 use App\Integrations\Fake\FakeVideoGenerator;
 use App\Integrations\Fal\FalImageGenerator;
+use App\Integrations\Fal\FalMusicGenerator;
 use App\Integrations\Fal\FalSpeechSynthesizer;
 use App\Integrations\Fal\FalVideoGenerator;
 use App\Integrations\Local\HeuristicScriptStructurer;
@@ -74,6 +75,9 @@ return [
         ],
         'music_generator' => [
             'fake' => FakeMusicGenerator::class,
+
+            // Any fal-hosted music model, chosen by studio.default_music_model.
+            'fal' => FalMusicGenerator::class,
         ],
         'sound_effect_generator' => [
             'fake' => FakeSoundEffectGenerator::class,
@@ -467,6 +471,145 @@ return [
     ],
 
     'default_image_model' => env('STUDIO_IMAGE_MODEL', 'fake'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Music models
+    |--------------------------------------------------------------------------
+    |
+    | One background bed per video (FR-13, Phase 1), mixed under the narration
+    | and ducked against it (FR-20). Music is the first capability in this
+    | pipeline where the choice of model is not a free one — and not for the
+    | reason you would expect.
+    |
+    | PRICE. The spread across fal's music models is roughly 125x for the same
+    | job: a 64-second bed is $0.013 on ACE-Step and $1.60 on MiniMax Music,
+    | which bills $0.80 per output minute ROUNDED UP to the next minute. At
+    | $1.60 the bed is 36% of a ~$4.48 video. Speech is under 2% of a run and
+    | images are cents, so both were chosen purely on quality; music is where a
+    | careless default would actually move the budget.
+    |
+    | VOCALS. The more important constraint. MiniMax and DiffRhythm generate
+    | SONGS — vocals and lyrics — and a sung line fights the narrator (FR-14).
+    | Ducking cannot fix it; ducking makes it quieter, not less distracting. So
+    | a model that can sing is only registered here with the payload defaults
+    | that switch singing off, and FalMusicGenerator refuses to call one that
+    | has neither.
+    |
+    | LICENSING. fal claims no rights in outputs, but commercial use follows the
+    | per-model licence, and a music model's TRAINING data is the live question
+    | for anything meant to be published. That is the deciding factor below.
+    |
+    | Tier B: read from search summaries of fal's and Stability's model pages on
+    | 24 Sep 2026, not from a live account. See docs/PROVIDER-RESEARCH.md §12.
+    |
+    */
+
+    'music_models' => [
+
+        'fake' => [
+            'label' => 'Fake music (local drone, free)',
+            'endpoint' => null,
+
+            // The local generator synthesises whatever length is asked for, so
+            // nothing is ever looped and the ffmpeg mix is exercised at full
+            // timeline length in tests.
+            'max_duration_seconds' => 3600.0,
+        ],
+
+        // The default when the fal driver is bound. Three reasons, heaviest
+        // first — and note that price is the last of them.
+        //
+        // 1. IT CANNOT SING. Stable Audio 3 is instrumental and sound design
+        //    only. "No vocals over the narration" is therefore a property of
+        //    the model rather than a parameter whose name we would be guessing
+        //    at from search results.
+        // 2. LICENSED TRAINING DATA. Trained on AudioSparx-licensed and
+        //    Freesound Creative Commons recordings, and the Stability AI
+        //    Community License grants commercial use of outputs for
+        //    organisations under $1M annual revenue (Enterprise License above
+        //    it). For a product meant to be deployed and used by real people,
+        //    provenance is a larger risk than a few cents.
+        // 3. FLAT PRICING. One charge per request whatever the length, so a
+        //    six-minute video's bed costs the same as a thirty-second one's.
+        //    It is the cheapest option in the registry above ~3 minutes.
+        'stable-audio-3' => [
+            'label' => 'Stable Audio 3 Medium (fal)',
+            'endpoint' => env('STUDIO_STABLE_AUDIO_ENDPOINT', 'fal-ai/stable-audio-3/medium/text-to-audio'),
+
+            // Published as $0.0417 per request. Rounded up under the
+            // over-estimate rule, so the budget cap errs toward refusing a run
+            // rather than overspending on one; at this scale the difference
+            // cannot threaten a run either way.
+            'cost_per_request_usd' => 0.05,
+            'cost_per_second_usd' => 0.0,
+
+            'min_duration_seconds' => 1.0,
+
+            // Documented as stereo music up to six minutes; the medium
+            // checkpoint's ceiling is ~380s. Anything longer is looped by the
+            // assembler rather than refused.
+            'max_duration_seconds' => 380.0,
+
+            'prompt_parameter' => 'prompt',
+
+            // VERIFY_IN_DASHBOARD: the length field is 'duration' on this
+            // model's page per search summaries, but the older Stable Audio
+            // Open endpoint calls it 'seconds_total'. If a live call 422s, this
+            // is the line to change — one unaccepted field fails the whole
+            // request, and fal's 422 reads like a wrong URL.
+            'duration_parameter' => 'duration',
+
+            'generates_vocals' => false,
+            'payload_defaults' => [],
+            'payload_parameters' => [],
+        ],
+
+        // The cheap alternative, and the worked example of vocal suppression:
+        // ACE-Step CAN sing, so it is safe here only because of
+        // payload_defaults below. $0.0002 a second — corroborated two ways, as
+        // fal's own comparison page states 83 minutes per $1.00, which is the
+        // same figure — making a 64-second bed about $0.013.
+        //
+        // Not the default despite being ~4x cheaper on a one-minute video.
+        // Its training-data provenance is not the licensed corpus Stable Audio
+        // has, and the endpoint below expands the prompt with a provider-side
+        // LLM, so the same prompt need not give the same brief twice (NFR-5).
+        //
+        // The 'prompt-to-audio' variant is chosen over the base 'fal-ai/ace-step'
+        // because it takes natural language. The base endpoint takes
+        // comma-separated genre 'tags' plus 'lyrics' instead — switching to it
+        // means changing prompt_parameter to 'tags' and putting
+        // lyrics => '[inst]' in payload_defaults, together, not one or the other.
+        'ace-step' => [
+            'label' => 'ACE-Step (fal)',
+            'endpoint' => env('STUDIO_ACE_STEP_ENDPOINT', 'fal-ai/ace-step/prompt-to-audio'),
+
+            'cost_per_request_usd' => 0.0,
+            'cost_per_second_usd' => 0.0002,
+
+            'min_duration_seconds' => 1.0,
+
+            // VERIFY_IN_DASHBOARD: the documented default is 60 seconds; the
+            // ceiling is not stated on the pages reachable from here, so this
+            // is a conservative figure. Too low costs an audible loop; too high
+            // costs a 422 mid-run.
+            'max_duration_seconds' => 240.0,
+
+            'prompt_parameter' => 'prompt',
+            'duration_parameter' => 'duration',
+
+            // The flag that makes this model usable at all here.
+            'generates_vocals' => true,
+            'payload_defaults' => [
+                'instrumental' => true,
+            ],
+
+            'payload_parameters' => [],
+        ],
+    ],
+
+    'default_music_model' => env('STUDIO_MUSIC_MODEL', 'fake'),
 
     /*
     |--------------------------------------------------------------------------

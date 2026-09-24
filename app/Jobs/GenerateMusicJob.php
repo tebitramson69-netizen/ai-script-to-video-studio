@@ -61,7 +61,7 @@ class GenerateMusicJob extends StudioJob
 
         $costs->assertCanSpend(
             $project,
-            ($duration / 60) * $music->costPerMinuteUsd(),
+            $music->costForSeconds($duration),
             'Music',
         );
 

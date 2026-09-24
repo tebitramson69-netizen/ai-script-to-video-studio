@@ -58,15 +58,23 @@ class FakeMusicGenerator implements MusicGenerator
             path: $path,
             mime: 'audio/wav',
             model: 'fake-music-v1',
-            costUsd: ($duration / 60) * $this->costPerMinuteUsd(),
+            costUsd: $this->costForSeconds($duration),
             durationSeconds: $this->ffmpeg->durationSeconds($path),
             meta: ['mood' => $request->mood, 'root_hz' => $root],
         );
     }
 
-    public function costPerMinuteUsd(): float
+    /**
+     * The local fake is free, but the rate stays configurable so budget
+     * behaviour can be exercised without a provider account. Still expressed
+     * per minute in config, because that is the figure a person reads on a
+     * pricing page.
+     */
+    public function costForSeconds(float $durationSeconds): float
     {
-        return (float) config('studio.fake_costs.music_per_minute_usd', 0.0);
+        $perMinute = (float) config('studio.fake_costs.music_per_minute_usd', 0.0);
+
+        return round((max(0.0, $durationSeconds) / 60) * $perMinute, 6);
     }
 
     public function providerName(): string

@@ -119,8 +119,14 @@ pattern to copy, and the reason for that structure matters:
   is written to tolerate being wrong (it finds the output by structure as well
   as by name); preserve that property.
 - `FalClient` — transport, retries and HTTP-status-to-taxonomy classification.
-  Knows nothing about video.
-- `FalVideoGenerator` — the pipeline-facing adapter.
+  Knows nothing about video. It takes its credential as a plain `string`, so the
+  container **cannot** autowire it — `StudioServiceProvider` binds it explicitly.
+  Do not remove that line: without it every fal driver throws an Unresolvable
+  dependency error before a single request is made, and no unit test catches it
+  because they all construct the adapters by hand.
+- `FalVideoGenerator`, `FalSpeechSynthesizer`, `FalImageGenerator`,
+  `FalMusicGenerator` — the pipeline-facing adapters, one per capability, each
+  reading its own registry in `config/studio.php`.
 
 `ProviderFailureReason` ties retryability to the reason so the two cannot
 disagree. Retrying a 402 waits for money that will not appear; not retrying a
@@ -193,6 +199,38 @@ silent fallback to English would be paid for before anyone noticed.
 
 `FalSpeechSynthesizer` **measures** the returned audio with ffprobe and ignores
 any duration the provider reports. See the next section for why.
+
+## Music is a bed, and it must not sing
+
+`studio.music_models` is the fourth registry. Two rules, and the first is not
+about money.
+
+**A vocal line is a ruined video, not a degraded one.** Music is mixed under the
+narration and ducked against it (FR-13, FR-20), so a sung lyric competes with the
+one voice the video is built around (FR-14) — and ducking makes it *quieter*, not
+less distracting. `FalMusicGenerator` refuses to call a model whose entry sets
+`generates_vocals` unless `payload_defaults` carries `instrumental` or `lyrics`,
+before spending anything. A prompt asking for "no vocals" does not count: that is
+a hope, and this needs to be a guarantee. The default model cannot sing at all.
+
+**This is the one registry where price moves the budget.** The spread is ~125×
+for the same job — a 64-second bed is $0.013 on ACE-Step and $1.60 on MiniMax
+Music, which bills per output minute *rounded up*. Speech is under 2% of a run
+and images are cents, so both were chosen purely on quality. Do not treat music
+the same way. `MusicGenerator::costForSeconds()` takes a duration rather than
+returning a rate, because some models bill flat per request and a per-minute rate
+cannot express that.
+
+**Clamping here, refusing everywhere else.** The assembler loops the music input
+(`-stream_loop -1`), so a bed shorter than the timeline repeats rather than
+leaving silence — a quality compromise, not a wrong result. A timeline past the
+model's ceiling is therefore clamped and flagged on the asset
+(`looped_to_cover_timeline`), not refused. This is the only place in the codebase
+where an unsupported capability is quietly accommodated, and that is deliberate.
+
+Field *names* are config, not constants (`prompt_parameter`,
+`duration_parameter`): audio models disagree about them, and
+`duration_parameter: null` means the model takes no length and none is invented.
 
 ## Timing: narration is the master clock
 

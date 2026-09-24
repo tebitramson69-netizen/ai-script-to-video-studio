@@ -4,6 +4,7 @@ namespace App\Services\Provider;
 
 use App\Contracts\Data\ImageModelCapabilities;
 use App\Contracts\Data\ModelCapabilities;
+use App\Contracts\Data\MusicModelCapabilities;
 use App\Contracts\Data\SpeechModelCapabilities;
 use App\Enums\AspectRatio;
 use App\Enums\GenerationMode;
@@ -28,6 +29,9 @@ class ModelRegistry
 
     /** @var array<string, ImageModelCapabilities> */
     protected array $imageCache = [];
+
+    /** @var array<string, MusicModelCapabilities> */
+    protected array $musicCache = [];
 
     public function video(string $key): ModelCapabilities
     {
@@ -205,6 +209,39 @@ class ModelRegistry
     public function availableImageKeys(): array
     {
         return array_keys((array) config('studio.image_models', []));
+    }
+
+    /**
+     * Capabilities of one music model.
+     */
+    public function music(string $key): MusicModelCapabilities
+    {
+        if (isset($this->musicCache[$key])) {
+            return $this->musicCache[$key];
+        }
+
+        $config = config("studio.music_models.{$key}");
+
+        if (! is_array($config)) {
+            throw new InvalidArgumentException(
+                "Unknown music model '{$key}'. Registered: ".implode(', ', $this->availableMusicKeys()).'.'
+            );
+        }
+
+        return $this->musicCache[$key] = MusicModelCapabilities::fromConfig($key, $config);
+    }
+
+    public function defaultMusic(): MusicModelCapabilities
+    {
+        return $this->music((string) config('studio.default_music_model', 'fake'));
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function availableMusicKeys(): array
+    {
+        return array_keys((array) config('studio.music_models', []));
     }
 
     /**

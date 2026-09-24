@@ -297,28 +297,37 @@ Stated plainly rather than left for you to discover:
    written to tolerate being wrong — it finds the output by structure as well as
    by name. Run `studio:capture-fal-shapes` against a funded account to replace
    the assumption with a fixture.
-2. **Narration has a real adapter; music and SFX do not.** `FalSpeechSynthesizer`
-   renders narration on any fal-hosted TTS model, defaulting to Kokoro —
-   see `docs/PROVIDER-RESEARCH.md` §10 for why fal rather than ElevenLabs
-   directly, and why the cheaper model is the default. Like the video adapter
-   it is tested only against faked HTTP. Music and SFX are still fakes.
-3. **Music and SFX have no real adapter** — `docs/PROVIDERS.md` gives the shape.
-   The **script structurer is deliberately deterministic, not an LLM**: it needs
+2. **Video, narration, character images and music have real adapters; SFX does
+   not.** `FalSpeechSynthesizer` renders narration on any fal-hosted TTS model,
+   defaulting to Kokoro (`docs/PROVIDER-RESEARCH.md` §10 — why fal rather than
+   ElevenLabs directly, and why the cheaper model is the default);
+   `FalImageGenerator` generates character references on FLUX (§11); and
+   `FalMusicGenerator` generates the background bed, defaulting to Stable Audio 3
+   Medium (§12). All four are tested only against faked HTTP.
+3. **Music is the only capability where the model choice moves the budget.**
+   The spread across fal's music models is ~125× for the same job, and the
+   expensive ones generate *songs* — vocals that fight the narrator (FR-14) and
+   that ducking cannot fix. So the default is instrumental-only by construction
+   rather than by parameter, and `FalMusicGenerator` refuses to call a
+   vocal-capable model that nothing has told to stop singing. See
+   `docs/PROVIDER-RESEARCH.md` §12.
+4. **The script structurer is deliberately deterministic, not an LLM.** It needs
    no provider, so it is the one capability whose default is real. Its v1
    contract, and precisely which parts are guaranteed versus heuristic, are in
    `docs/SCRIPT-STRUCTURER.md`.
-4. **Character consistency (G2/FR-6) is reachable but unproven.** The
+5. **Character consistency (G2/FR-6) is reachable but unproven.** The
    `kling-2-5-turbo-pro-i2v` entry wires the image-to-video path end to end.
    Its endpoint, duration ladder and $0.07/s rate are corroborated by
    third-party sources (`docs/PROVIDER-RESEARCH.md` §9) but none has been read
    off the page by the account owner, so all of it is Tier B. fal.ai is
    unreachable from this codebase — every request is `EGRESS_BLOCKED` — so
    Tier A needs someone with an account.
-5. **Per-scene SFX (FR-13, Phase 2)** has an interface and a fake driver, but is
-   not placed on the assembly timeline.
-6. **No polling/websockets.** Queued stages update on page refresh. This starts
+6. **SFX is the one capability with no real adapter.** It has an interface and a
+   fake driver, and `docs/PROVIDERS.md` gives the shape, but nothing is placed on
+   the assembly timeline — per-scene SFX is Phase 2 in the PRD regardless.
+7. **No polling/websockets.** Queued stages update on page refresh. This starts
    to matter once real renders take minutes rather than seconds.
-7. **The `"Ai"` Laravel project (PRD D1/A5) was never inspected** — it was not
+8. **The `"Ai"` Laravel project (PRD D1/A5) was never inspected** — it was not
    reachable from the environment this was built in. Nothing here assumes the
    shape of its `usage_records` table; this project defines its own. If you do
    want to merge the two, that reconciliation is still open.

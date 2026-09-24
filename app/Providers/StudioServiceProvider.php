@@ -8,6 +8,7 @@ use App\Contracts\ScriptStructurer;
 use App\Contracts\SoundEffectGenerator;
 use App\Contracts\SpeechSynthesizer;
 use App\Contracts\VideoGenerator;
+use App\Integrations\Fal\FalClient;
 use App\Services\Media\FfmpegRunner;
 use App\Services\Timing\NarrationEstimator;
 use Illuminate\Support\ServiceProvider;
@@ -37,6 +38,13 @@ class StudioServiceProvider extends ServiceProvider
     {
         $this->app->singleton(FfmpegRunner::class, fn () => FfmpegRunner::fromConfig());
         $this->app->singleton(NarrationEstimator::class, fn () => NarrationEstimator::fromConfig());
+
+        // FalClient takes its credential as a plain string, which the container
+        // cannot autowire. Without this line every fal driver below is
+        // unresolvable — `STUDIO_VIDEO_DRIVER=fal` throws an Unresolvable
+        // dependency error before a single request is made. The unit tests
+        // never saw it because they construct the adapters by hand.
+        $this->app->singleton(FalClient::class, fn () => FalClient::fromConfig());
 
         foreach (self::CAPABILITIES as $interface => $capability) {
             $this->app->singleton(

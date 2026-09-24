@@ -41,7 +41,14 @@ class FalResponseMapper
     /** Dotted paths, most specific first. */
     protected const AUDIO_PATHS = [
         'audio.url',
+
+        // Stable Audio's own field name, distinct from the 'audio' every other
+        // audio model on fal uses. Listed rather than left to the extension
+        // sniff below because a music result carries other URLs too.
+        'audio_file.url',
+
         'output.audio.url',
+        'output.audio_file.url',
         'data.audio.url',
         'response.audio.url',
         'audio_url',

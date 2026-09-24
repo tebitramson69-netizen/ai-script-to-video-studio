@@ -684,6 +684,132 @@ Tier B — search summaries of fal's model pages, 23 Sep 2026. fal.ai remains
 `EGRESS_BLOCKED`. The per-image price is the one value worth confirming first,
 and it is the one that matters least.
 
+## 12. The background music bed, 24 Sep 2026
+
+The last piece of the audio mix. Music is the first capability in this pipeline
+where **the choice of model is not a free one** — and the money turns out to be
+the second reason, not the first.
+
+### Price finally matters here, unlike speech and images
+
+The spread across fal's music models is roughly **125×** for the same job.
+
+| Model | Rate | 64-second bed | Share of a ~$4.48 run |
+| --- | --- | --- | --- |
+| ACE-Step | $0.0002/s | **$0.013** | 0.3% |
+| Stable Audio 3 Medium | $0.0417 flat per request | **$0.042** | 0.9% |
+| DiffRhythm | $0.001/s | $0.064 | 1.4% |
+| MiniMax Music | $0.80 per output minute, **rounded up to the next minute** | **$1.60** | **36%** |
+
+Narration is under 2% of a run and nine reference images are cents, so both were
+chosen purely on quality. MiniMax at 36% of a run is a different kind of
+decision — a careless default there genuinely moves the budget, and the
+rounding-up makes a 61-second video cost the same as a 120-second one.
+
+### But vocals disqualify the expensive options anyway
+
+MiniMax and DiffRhythm generate **songs** — vocals and lyrics. This project's
+music is a *bed* under narration (FR-13), mixed with `sidechaincompress` keyed on
+the narrator's voice (FR-20). A sung line competes with the one voice the whole
+video is built around (FR-14), and **ducking cannot fix that** — ducking makes it
+quieter, not less distracting.
+
+So the requirement is not "cheap music". It is:
+
+1. **instrumental, guaranteed** — not "instrumental if the prompt asks nicely";
+2. duration control, so the bed covers the timeline;
+3. cheap enough not to dominate the budget;
+4. licensed for commercial use.
+
+### Why Stable Audio 3 Medium is the default
+
+It satisfies (1) **structurally rather than by parameter**: Stable Audio 3 is
+instrumental and sound-design only. It cannot sing. That is a property of the
+model, not a field name we would be guessing at from search summaries.
+
+It also settles (4), which is the finding worth keeping. fal claims no rights in
+outputs, but a music model's **training data** is the live question for anything
+meant to be published:
+
+> Stable Audio 3 was trained on 806,284 AudioSparx-licensed and 472,618
+> Freesound Creative Commons recordings, and the Stability AI Community License
+> grants commercial use of outputs for organisations under $1M annual revenue
+> (Enterprise License above it).
+
+For a product meant to be deployed and used by real people, provenance is a
+larger risk than a few cents. Separately, the US Copyright Office's position is
+that purely AI-generated work may not be copyrightable — so an output can be
+used and sold but is not necessarily defensible against a third party who copies
+it. That is worth knowing before a client is told the soundtrack is "theirs".
+
+Its **flat pricing** then makes it the cheapest option in the registry above
+about three minutes: $0.0417 whether the track is 30 seconds or 380.
+
+### ACE-Step is registered as the worked example of suppression
+
+Four times cheaper on a one-minute video, and it **can** sing — so it is only
+safe here because `payload_defaults` sends `instrumental: true`. The adapter
+refuses to call a vocal-capable model that has neither `instrumental` nor
+`lyrics` configured, before spending anything: an unusable track paid for in full
+is worse than a refusal that names the config line to change.
+
+Not the default for two reasons beyond provenance: the `prompt-to-audio` variant
+expands the prompt with a **provider-side LLM**, so the same prompt need not give
+the same brief twice (NFR-5), and the base `fal-ai/ace-step` endpoint takes
+comma-separated genre `tags` plus `lyrics` rather than natural language.
+
+### What this forced in the code
+
+**The cost contract changed shape.** `MusicGenerator::costPerMinuteUsd()` cannot
+express a flat per-request charge without knowing the length, so it became
+`costForSeconds(float $seconds)`. `MusicModelCapabilities` then carries both
+`cost_per_request_usd` and `cost_per_second_usd` and the total is
+`flat + per_second × seconds` — one formula for both billing models.
+
+**Field names became config, not constants.** Audio models disagree about them:
+ACE-Step's style input is `tags` and its length is `duration`; Stable Audio
+Open's length is `seconds_total`. So `prompt_parameter` and `duration_parameter`
+are registry entries. `duration_parameter: null` means the model takes no length
+at all, and nothing is invented — one unaccepted field fails the whole request,
+and fal's 422 reads like a wrong URL.
+
+**Clamping, uniquely, rather than refusing.** Everywhere else in this codebase an
+unsupported capability is refused. Here the assembler already loops the music
+input (`-stream_loop -1`), so a bed shorter than the video *repeats* rather than
+leaving silence — a quality compromise, not a wrong result. A 500-second timeline
+on a 380-second ceiling is clamped, and `looped_to_cover_timeline` is recorded on
+the asset so an audible repeat has a traceable cause.
+
+**The mood is not a prompt.** Scenes carry a mood from a closed enum, and "tense"
+alone is a poor prompt for a text-to-audio model. `FalMusicGenerator::MOOD_PROMPTS`
+translates each one into an instrumentation brief that names instruments, a tempo,
+and the fact that the track sits under a spoken voiceover. That phrasing is
+provider-side, so it lives in the adapter next to the fake driver's
+mood-to-frequency table — not in the enum.
+
+### The bug this turned up on the way in
+
+`FalClient` takes its credential as a plain `string`, which the container cannot
+autowire, and **nothing bound it**. So `STUDIO_VIDEO_DRIVER=fal` threw
+`Unresolvable dependency resolving [Parameter #0 [ <required> string $apiKey ]]`
+before a single request was made — every fal adapter in the project was
+unreachable in production. The unit tests never saw it because they all construct
+the adapters by hand.
+
+One line in `StudioServiceProvider` fixes it, and
+`test_every_fal_driver_resolves_through_the_container` now asserts all three
+resolve, so it cannot come back for one of them.
+
+### Tier
+
+Tier B — search summaries of fal's and Stability's model pages, 24 Sep 2026.
+fal.ai remains `EGRESS_BLOCKED` (re-verified, not recalled). Two values are worth
+confirming first because both cost a 422 mid-run rather than money:
+`duration_parameter` on Stable Audio 3, and ACE-Step's actual maximum length
+(registered conservatively at 240s).
+
+---
+
 ---
 
 ## Sources
@@ -760,3 +886,18 @@ Cameroon payments:
 - https://swychr.com/how-to-get-a-free-virtual-card-in-cameroon-using-the-swychr-app/ *(blocked)*
 - https://kangcard.com/
 - https://www.beonweb.cm/en/blog/paiement-en-ligne-cameroun-mtn-orange-money-2026
+
+Music models, 24 Sep 2026 — search summaries; fal.ai is egress-blocked:
+- https://fal.ai/models/fal-ai/stable-audio-3/medium/text-to-audio *(blocked; indexed)*
+- https://fal.ai/models/fal-ai/stable-audio-3/medium/text-to-audio/api *(blocked; indexed)*
+- https://fal.ai/models/fal-ai/ace-step/api *(blocked; indexed)*
+- https://fal.ai/models/fal-ai/ace-step/prompt-to-audio/api *(blocked; indexed)*
+- https://fal.ai/models/fal-ai/ace-step/llms.txt *(blocked)*
+- https://fal.ai/models/fal-ai/stable-audio/api *(blocked; indexed)*
+- https://fal.ai/learn/tools/ai-music-generators *(blocked; indexed)*
+- https://stability.ai/news-updates/meet-stable-audio-3-the-model-family-built-for-artistic-experimentation-with-open-weight-models
+- https://huggingface.co/stabilityai/stable-audio-3-medium
+- https://www.therundown.ai/tools/stable-audio-3-0
+- https://blog.dubspot.com/stable-audio-3-review
+- https://byteiota.com/stable-audio-3-developer-guide/
+- https://docs.comfy.org/tutorials/audio/stable-audio/stable-audio-3
