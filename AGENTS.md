@@ -16,12 +16,12 @@ Read `README.md` for the feature map, `docs/BUILD-PLAN.md` for sequencing, and
 
 ## Orientation
 
-The Laravel app is in **`studio/`**, not the repository root. Every `composer`,
-`artisan`, `pint` and `test` command runs from there; CI sets
-`working-directory: studio` for the same reason.
+The Laravel app **is** the repository — it lives at the root. (It previously sat
+in a `studio/` subfolder of an unrelated repository, because the session that
+built it could not create a new repo; history was extracted with
+`git subtree split`, so the commits are the same ones.)
 
 ```sh
-cd studio
 composer install
 cp .env.example .env && php artisan key:generate   # tests fail without APP_KEY
 php artisan migrate

@@ -2,7 +2,7 @@ name: Tests
 
 on:
   push:
-    branches: [main, master]
+    branches: ["main"]
   pull_request:
 
 permissions:
@@ -20,31 +20,37 @@ jobs:
     name: PHP ${{ matrix.php }}
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
+      - uses: shivammathur/setup-php@v2
         with:
+          # composer.json requires ^8.3, and config.platform.php is pinned to
+          # 8.3.0 so the lock resolves against the version XAMPP commonly ships.
           php-version: ${{ matrix.php }}
           extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, gd
           coverage: none
 
-      # The end-to-end test renders real media. Without ffmpeg it skips itself,
-      # which would quietly turn the most valuable test in the suite into a no-op.
+      # The end-to-end test renders real media and skips itself when ffmpeg is
+      # absent. Without this the most valuable test in the suite would pass by
+      # doing nothing.
       - name: Install FFmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
-      - name: Install Composer dependencies
-        run: composer install --prefer-dist --no-interaction --no-progress
+      - name: Copy .env
+        run: php -r "file_exists('.env') || copy('.env.example', '.env');"
 
-      - name: Copy environment file
-        run: cp .env.example .env
+      - name: Install dependencies
+        run: composer install -q --no-ansi --no-interaction --no-scripts --no-progress --prefer-dist
 
-      - name: Generate app key
+      # Tests fail with "No application encryption key has been specified"
+      # without this.
+      - name: Generate key
         run: php artisan key:generate
 
-      - name: Execute tests
+      - name: Directory permissions
+        run: chmod -R 777 storage bootstrap/cache
+
+      - name: Run tests
         run: php artisan test

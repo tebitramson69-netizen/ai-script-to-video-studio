@@ -1,0 +1,40 @@
+{
+    "folders": [
+        {
+            "name": "AI Script-to-Video Studio",
+            "path": "."
+        }
+    ],
+    "settings": {
+        "files.exclude": {
+            "**/vendor": true,
+            "**/node_modules": true,
+            "storage/framework": true,
+            "storage/logs": true
+        },
+        "search.exclude": {
+            "**/vendor": true,
+            "**/node_modules": true,
+            "composer.lock": true,
+            "package-lock.json": true
+        },
+        "files.associations": {
+            "*.blade.php": "blade"
+        },
+        "[php]": {
+            "editor.insertSpaces": true,
+            "editor.tabSize": 4
+        },
+        "editor.rulers": [80],
+        "files.trimTrailingWhitespace": true,
+        "files.insertFinalNewline": true
+    },
+    "extensions": {
+        "recommendations": [
+            "bmewburn.vscode-intelephense-client",
+            "onecentlin.laravel-blade",
+            "open-southeners.laravel-pint",
+            "EditorConfig.EditorConfig"
+        ]
+    }
+}

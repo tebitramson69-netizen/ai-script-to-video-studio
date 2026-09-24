@@ -13,6 +13,60 @@ assembles the pieces into one exported file.
 
 ---
 
+## Running it locally
+
+The Laravel application is this repository — it lives at the root, so every
+command runs from here.
+
+```sh
+git clone https://github.com/tebitramson69-netizen/ai-script-to-video-studio.git
+cd ai-script-to-video-studio
+
+composer install
+cp .env.example .env
+php artisan key:generate          # tests fail without an APP_KEY
+php artisan migrate
+php artisan test                  # 300 tests; renders a real .mp4
+php artisan serve                 # http://127.0.0.1:8000
+php artisan studio:create-owner   # there is no public sign-up (§14)
+```
+
+**PHP 8.3 or 8.4.** `composer.json` pins `config.platform.php` to `8.3.0` so the
+lock resolves against the version XAMPP commonly ships — do not remove that pin.
+
+**FFmpeg is required** for the parts that matter. Several tests skip themselves
+without it, including the end-to-end test that asserts the export is a playable
+h264+aac file, so a green run on a machine without FFmpeg is weaker than it
+looks. On XAMPP/Windows set the full path in `.env`:
+
+```dotenv
+FFMPEG_BINARY=C:\ffmpeg\bin\ffmpeg.exe
+FFPROBE_BINARY=C:\ffmpeg\bin\ffprobe.exe
+```
+
+### VS Code
+
+Open `studio.code-workspace` rather than the bare folder — it hides `vendor/`
+and `node_modules/` from search, associates `.blade.php`, and suggests the four
+extensions worth having (Intelephense, Laravel Blade, Pint, EditorConfig).
+
+```sh
+code studio.code-workspace
+```
+
+`.vscode/settings.json` carries a smaller version of the same settings for when
+the folder is opened directly.
+
+### On this repository's history
+
+The project was originally built inside a `studio/` subfolder of an unrelated
+`Student_registration` repository, because the session that built it could not
+create a new repository. The history here was extracted with
+`git subtree split --prefix=studio`, so these are the same commits — not a
+squashed copy.
+
+---
+
 ## Status: what actually works today
 
 The entire pipeline runs end to end **right now**, offline, at zero cost, using
