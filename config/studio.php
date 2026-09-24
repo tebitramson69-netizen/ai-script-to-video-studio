@@ -3,13 +3,13 @@
 use App\Integrations\Fake\FakeImageGenerator;
 use App\Integrations\Fake\FakeMusicGenerator;
 use App\Integrations\Fake\FakeQueueableVideoGenerator;
-use App\Integrations\Fake\FakeScriptStructurer;
 use App\Integrations\Fake\FakeSoundEffectGenerator;
 use App\Integrations\Fake\FakeSpeechSynthesizer;
 use App\Integrations\Fake\FakeVideoGenerator;
 use App\Integrations\Fal\FalImageGenerator;
 use App\Integrations\Fal\FalSpeechSynthesizer;
 use App\Integrations\Fal\FalVideoGenerator;
+use App\Integrations\Local\HeuristicScriptStructurer;
 
 /**
  * Every third-party capability the pipeline needs is named here and resolved
@@ -31,7 +31,9 @@ return [
     |
     */
 
-    'script_structurer' => env('STUDIO_SCRIPT_DRIVER', 'fake'),
+    // The only capability whose default is a real implementation rather than a
+    // fake: structuring needs no provider, so there is nothing to wait for.
+    'script_structurer' => env('STUDIO_SCRIPT_DRIVER', 'heuristic'),
     'image_generator' => env('STUDIO_IMAGE_DRIVER', 'fake'),
     'video_generator' => env('STUDIO_VIDEO_DRIVER', 'fake'),
     'speech_synthesizer' => env('STUDIO_SPEECH_DRIVER', 'fake'),
@@ -40,7 +42,10 @@ return [
 
     'drivers' => [
         'script_structurer' => [
-            'fake' => FakeScriptStructurer::class,
+            // Deterministic, local, free. Not a placeholder — see
+            // docs/SCRIPT-STRUCTURER.md for the v1 contract and for exactly
+            // which parts are heuristic and which are guaranteed.
+            'heuristic' => HeuristicScriptStructurer::class,
         ],
         'image_generator' => [
             'fake' => FakeImageGenerator::class,

@@ -155,6 +155,22 @@ it would let a shot carrying `fake` be costed at zero on a project pinned to
 something expensive, which is the exact hole the budget cap exists to close.
 `CostEstimator::capabilitiesFor()` applies the same rule; keep them in step.
 
+## Scene cast attribution is data, not a text search
+
+`ScriptStructurer` decides which characters belong to which scene,
+`StructureScriptJob` persists that to the `character_scene` pivot, and
+`PlanShotsJob` reads it back. Do not reintroduce a narration text search as the
+primary path: dialogue cues are stripped from narration so the single narrator
+voice does not read out "Ada colon" (FR-14), which removes the very name such a
+search matched. The regex in `charactersInScene()` is a legacy fallback for
+scenes created before the pivot existed, and nothing new should rely on it.
+
+The structurer is deterministic and local by design — no LLM, no key, no cost.
+Its contract is `docs/SCRIPT-STRUCTURER.md`; read it before changing any
+heuristic, because it states what the schema guarantees (enforced by
+`ScriptBreakdownValidator`, which runs on the structurer's own output) versus
+what is merely best-effort.
+
 ## A character reference's shape is the video's shape
 
 `image_models.*.image_sizes` maps an aspect ratio onto the provider's size

@@ -248,8 +248,11 @@ Stated plainly rather than left for you to discover:
    see `docs/PROVIDER-RESEARCH.md` §10 for why fal rather than ElevenLabs
    directly, and why the cheaper model is the default. Like the video adapter
    it is tested only against faked HTTP. Music and SFX are still fakes.
-3. **Music and SFX have no real adapter**, and the script structurer is still a
-   heuristic rather than an LLM. Both are `docs/PROVIDERS.md` shape-only.
+3. **Music and SFX have no real adapter** — `docs/PROVIDERS.md` gives the shape.
+   The **script structurer is deliberately deterministic, not an LLM**: it needs
+   no provider, so it is the one capability whose default is real. Its v1
+   contract, and precisely which parts are guaranteed versus heuristic, are in
+   `docs/SCRIPT-STRUCTURER.md`.
 4. **Character consistency (G2/FR-6) is reachable but unproven.** The
    `kling-2-5-turbo-pro-i2v` entry wires the image-to-video path end to end.
    Its endpoint, duration ladder and $0.07/s rate are corroborated by

@@ -1,0 +1,5 @@
+Water moves through three states.
+
+Ice melts into liquid when it warms.
+
+Liquid becomes vapour when it boils.

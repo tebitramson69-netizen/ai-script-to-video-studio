@@ -30,7 +30,7 @@ class PlanShotsJob extends StudioJob
         ShotPlanner $planner,
         ProjectStateMachine $stateMachine,
     ): void {
-        $project = Project::with('scenes', 'characters')->find($this->projectId);
+        $project = Project::with('scenes.characters', 'characters')->find($this->projectId);
 
         if ($project === null || $project->scenes->isEmpty()) {
             return;
@@ -132,6 +132,18 @@ class PlanShotsJob extends StudioJob
      */
     protected function charactersInScene(Scene $scene, Project $project)
     {
+        // The structurer's attribution, persisted at parse time. Authoritative,
+        // because a stripped dialogue cue leaves no name in the narration for a
+        // text search to find (see the character_scene migration).
+        $attributed = $scene->characters;
+
+        if ($attributed->isNotEmpty()) {
+            return $attributed;
+        }
+
+        // Legacy path: scenes created before attribution was persisted have an
+        // empty pivot. Re-deriving from the text keeps those projects working
+        // until the owner re-parses. New scenes never reach this.
         $haystack = $scene->narration.' '.$scene->action.' '.$scene->setting;
 
         return $project->characters->filter(
