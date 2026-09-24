@@ -281,6 +281,34 @@ down the timeline rather than staying local.
 
 ---
 
+## Live progress is polled, and that was a decision
+
+`GET /projects/{project}/status` returns a `ProgressSnapshot` as JSON; the page
+renders the same snapshot server-side and `public/js/studio-progress.js` keeps it
+current. **Not websockets and not SSE**, for a reason worth not re-litigating:
+this deploys on XAMPP and Apache, every open SSE stream holds one Apache worker
+and one PHP session file lock for its whole life, and — decisively — the stages
+here take *minutes*, so sub-second delivery buys a human watching them nothing.
+See `docs/PROVIDER-RESEARCH.md` §14.
+
+Four invariants hold this together. Breaking any of them is a regression that
+tests will catch, but it is cheaper to know why they exist:
+
+- **`fingerprint` must never contain a clock.** Structural change triggers a page
+  reload, so a snapshot that changed every second would refresh the page every
+  three seconds, forever.
+- **The endpoint must stay read-only.** It is a plain GET with no CSRF token, and
+  that exemption is only safe while it mutates nothing.
+- **The poller must not re-render the page.** It updates a strip in place and
+  reloads on structural change. Rebuilding shot cards or cost tables in
+  JavaScript would create a second rendering path that drifts from Blade's.
+- **`busy` is the on/off switch**, and `Stale` is deliberately not busy — stale
+  means "waiting for a decision", not "running".
+
+The endpoint is polled, so it is also the one place where PHP's session file lock
+matters: every poll holds it for the request's duration, and a form submission in
+another tab waits behind it. Keep it to grouped counts and a hash.
+
 ## Security baseline (PRD §14) — preserve in every change
 
 - Provider keys are server-side only, read from `.env`, never on a command line

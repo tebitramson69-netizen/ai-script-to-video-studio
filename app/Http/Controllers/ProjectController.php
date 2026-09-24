@@ -11,9 +11,11 @@ use App\Models\Asset;
 use App\Models\Project;
 use App\Services\Cost\CostEstimator;
 use App\Services\Pipeline\PipelineRunner;
+use App\Services\Pipeline\ProgressSnapshot;
 use App\Services\Pipeline\ProjectStateMachine;
 use App\Services\Provider\ModelRegistry;
 use App\Services\Retention\RetentionManager;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -119,6 +121,12 @@ class ProjectController extends Controller
             'estimate' => $costs->estimateRemainingRun($project),
             'runtimeSeconds' => $costs->estimatedRuntimeSeconds($project),
             'exportBlockedReason' => $stateMachine->exportBlockedReason($project),
+
+            // The same snapshot the polling endpoint returns, so the strip is
+            // correct on first paint and the poller starts from a fingerprint it
+            // can compare against rather than reloading the page on its first
+            // successful request.
+            'progress' => ProgressSnapshot::for($project, $stateMachine->exportBlockedReason($project)),
             'candidatesByCharacter' => $this->candidatesByCharacter($project),
 
             // NFR-7: the owner cannot manage storage they cannot see.
@@ -141,6 +149,28 @@ class ProjectController extends Controller
             'shotModels' => $project->shots
                 ->mapWithKeys(fn ($shot) => [$shot->id => $models->forShot($shot)->label]),
         ]);
+    }
+
+    /**
+     * The polling endpoint behind the live progress strip.
+     *
+     * A GET that spends nothing and mutates nothing, so it sits outside the
+     * CSRF-protected write surface by design (§14) — but inside `auth` and behind
+     * the same `view` policy as the page, because a project's spend, shot count
+     * and failure state are not public facts.
+     *
+     * Deliberately thin. It is polled every few seconds, and every poll also
+     * holds PHP's session file lock for its duration, which a form submission in
+     * another tab would wait behind. Two grouped counts and a hash is the whole
+     * budget.
+     */
+    public function status(Project $project, ProjectStateMachine $stateMachine): JsonResponse
+    {
+        $this->authorize('view', $project);
+
+        return response()->json(
+            ProgressSnapshot::for($project, $stateMachine->exportBlockedReason($project))->toArray()
+        );
     }
 
     public function destroy(Project $project): RedirectResponse

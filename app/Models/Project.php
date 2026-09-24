@@ -58,6 +58,18 @@ class Project extends Model
         return $this->hasMany(Asset::class);
     }
 
+    /**
+     * Async provider work this project has submitted (FR-10 lifecycle).
+     *
+     * Read by the progress endpoint to answer "is anything still running?" — a
+     * render can outlive the worker that started it, so an outstanding request is
+     * the only evidence that work is in flight after a restart.
+     */
+    public function providerRequests(): HasMany
+    {
+        return $this->hasMany(ProviderRequest::class);
+    }
+
     public function usageRecords(): HasMany
     {
         return $this->hasMany(UsageRecord::class);

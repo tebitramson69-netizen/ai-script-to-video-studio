@@ -137,6 +137,28 @@ button.link { background: none; border: none; color: var(--accent); cursor: poin
 .facts li { padding: .25rem 0; }
 .final video { width: 100%; max-width: 720px; border-radius: 8px; background: #000; display: block; margin: .5rem 0; }
 
+/* Live progress strip. Hidden until the poller shows it, so a page with
+   JavaScript off never displays a bar that will not move. */
+.progress-strip { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); padding: .7rem .9rem; margin: 0 0 1rem; }
+.progress-strip[hidden] { display: none; }
+.progress-bar { height: 6px; background: var(--line); border-radius: 999px; overflow: hidden; }
+.progress-bar-fill { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 999px; transition: width .4s ease; }
+.progress-line { display: flex; gap: .75rem; align-items: baseline; justify-content: space-between; flex-wrap: wrap; margin: .5rem 0 0; font-size: .9rem; }
+
+/* Only the busy state animates. A pulsing bar on an idle project reads as
+   "something is happening" when nothing is. */
+.progress-strip.progress-busy .progress-bar-fill { background: linear-gradient(90deg, var(--accent), #8fb0ff, var(--accent)); background-size: 200% 100%; animation: progress-sheen 1.6s linear infinite; }
+.progress-strip.progress-paused { border-color: var(--warn); }
+.progress-strip.progress-paused .progress-bar-fill { animation: none; background: var(--warn); }
+
+@keyframes progress-sheen { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+
+/* Respect the setting. A continuously animated bar is exactly what this is for. */
+@media (prefers-reduced-motion: reduce) {
+    .progress-strip.progress-busy .progress-bar-fill { animation: none; }
+    .progress-bar-fill { transition: none; }
+}
+
 @media (max-width: 640px) {
     .wrap { padding: 1rem .75rem 3rem; }
     .shots { grid-template-columns: 1fr; }

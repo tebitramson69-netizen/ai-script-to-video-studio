@@ -49,6 +49,23 @@ Route::middleware('auth')->group(function () {
     Route::delete('/projects/{project}', [ProjectController::class, 'destroy'])->name('projects.destroy');
 
     Route::prefix('/projects/{project}')->group(function () {
+        // The polling endpoint behind the live progress strip. A GET that spends
+        // nothing and mutates nothing, so it needs no CSRF token — but it is
+        // inside `auth` and behind the same `view` policy as the page.
+        //
+        // throttle: adaptive polling settles at roughly 20 requests a minute per
+        // open tab, so 120 leaves room for several tabs while still stopping a
+        // runaway loop — a poller whose backoff broke would otherwise hammer the
+        // app until someone noticed.
+        //
+        // cache.headers with etag: the response is a few hundred bytes and most
+        // polls return exactly the bytes of the last one. A 304 sends none of
+        // them, which matters on a metered mobile connection far more than it
+        // does on the server.
+        Route::get('/status', [ProjectController::class, 'status'])
+            ->middleware(['throttle:120,1', 'cache.headers:private;max_age=0;etag'])
+            ->name('projects.status');
+
         // Pipeline stages (PRD §8).
         Route::post('/parse', [PipelineController::class, 'parseScript'])->name('pipeline.parse');
         Route::post('/characters/generate', [PipelineController::class, 'generateCharacters'])->name('pipeline.characters');

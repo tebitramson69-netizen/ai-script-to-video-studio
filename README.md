@@ -329,8 +329,12 @@ Stated plainly rather than left for you to discover:
    positioning within a scene rather than at it, and that stays Phase 2. Most
    scripts cue few scenes or none, which is by design: a cue is a charge, and a
    false positive is a sound that does not belong in the video.
-7. **No polling/websockets.** Queued stages update on page refresh. This starts
-   to matter once real renders take minutes rather than seconds.
+7. **Live progress is polled, deliberately.** A status endpoint plus an adaptive
+   poller (pauses on a hidden tab, backs off to 30s on a quiet project, stops
+   entirely when idle, ETag so an unchanged poll costs no body). Not websockets
+   and not SSE: this deploys on XAMPP/Apache where every open SSE stream holds an
+   Apache worker and a PHP session lock, and the stages here take minutes, so
+   sub-second delivery buys nothing. `docs/PROVIDER-RESEARCH.md` §14.
 8. **The `"Ai"` Laravel project (PRD D1/A5) was never inspected** — it was not
    reachable from the environment this was built in. Nothing here assumes the
    shape of its `usage_records` table; this project defines its own. If you do

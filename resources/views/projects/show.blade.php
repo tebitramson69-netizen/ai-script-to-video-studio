@@ -67,6 +67,29 @@
         <p class="next-action">Next: {{ $status->nextAction() }}</p>
     @endif
 
+    {{-- ── Live progress ────────────────────────────────────────────────────
+         The pipeline runs on a queue, so without this the page shows whatever
+         was true when it was served — and an owner who refreshes at the wrong
+         moment sees "0 of 6 rendered" and concludes the stage failed.
+
+         Rendered server-side and hidden until the script takes over, so the
+         numbers are already correct with JavaScript switched off. The strip only
+         ever becomes MORE current; it is never the sole source of the figures.
+    --}}
+    <div id="progress-strip" class="progress-strip" role="status" aria-live="polite" hidden>
+        <div class="progress-bar"><span id="progress-bar-fill" class="progress-bar-fill"
+            style="width: {{ $progress->shots['total'] > 0 ? round(($progress->shots['rendered'] / $progress->shots['total']) * 100) : 0 }}%"></span></div>
+        <p class="progress-line">
+            <span id="progress-text">{{ $progress->busy ? 'Working…' : $progress->status->label() }}</span>
+            <span id="progress-spend" class="muted small">
+                ${{ number_format($progress->spentUsd, 2) }} of ${{ number_format($progress->budgetCapUsd, 2) }}
+            </span>
+        </p>
+        <noscript>
+            <p class="hint">Live updates need JavaScript. Refresh the page to see progress.</p>
+        </noscript>
+    </div>
+
     {{-- ── Cost (FR-11, NFR-4) ─────────────────────────────────────────── --}}
     <section class="card">
         <h2>Cost</h2>
@@ -167,4 +190,16 @@
     @include('projects.partials.characters')
     @include('projects.partials.shots')
     @include('projects.partials.export')
+
+    {{-- The poller's only input, as a JSON island rather than interpolated into
+         source — the same rule the model-ratio script follows, and for the same
+         reason: nothing from the database is ever parsed as JavaScript. --}}
+    @php($progressConfig = [
+        'url' => route('projects.status', $project),
+        'status' => $progress->status->value,
+        'fingerprint' => $progress->fingerprint(),
+        'hasFinal' => $progress->assets['final'],
+    ])
+    <script type="application/json" id="progress-config">@json($progressConfig)</script>
+    <script src="{{ asset('js/studio-progress.js') }}" defer></script>
 @endsection

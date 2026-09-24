@@ -925,6 +925,101 @@ documented on a 22-second generation.
 
 ---
 
+## 14. Live progress: why polling, 24 Sep 2026
+
+The last real gap, and the one where the research mattered most for what NOT to
+build.
+
+### The problem is worse than "you have to refresh"
+
+The pipeline runs on a queue, so a page served mid-render shows whatever was true
+when it was served. That is not merely inconvenient — it is **misleading**. An
+owner who refreshes at the wrong moment sees "0 of 6 shots rendered" and
+reasonably concludes the stage failed, then presses the button again. On real
+providers that second press is money.
+
+### The three options, against this deployment
+
+| Approach | Verdict |
+| --- | --- |
+| **Laravel Reverb** (websockets) | Right on a VPS, wrong here. It is a long-running PHP process on its own port; Laravel's own docs note it needs server tuning for connection counts. This deploys on **XAMPP and Apache**. |
+| **Server-sent events** | Laravel 13 genuinely ships `response()->eventStream()`, so the framework side is a one-liner. The *deployment* side is not: every open stream holds **one Apache worker and one PHP session file lock** for its entire life. PHP locks the session file for the duration of a request, and an SSE request never ends — so a second tab, or any form POST, blocks until the stream closes. The documented mitigation is `session_write_close()`, which in a Laravel app means giving up the session mid-request. |
+| **Polling** | Chosen. |
+
+### But the decisive reason is not infrastructure
+
+**The stages here take minutes.** A clip is ~30 seconds of provider time,
+narration is seconds, assembly is an ffmpeg pass. Sub-second delivery buys a human
+watching that *nothing at all*. Three seconds is indistinguishable from instant at
+this timescale, and it costs one cheap GET.
+
+Picking websockets here would have been choosing the more impressive answer over
+the correct one, and paying for it in a deployment that cannot host it.
+
+### What makes polling acceptable rather than merely simple
+
+Naive `setInterval` polling is genuinely bad — it runs in background tabs, burns
+mobile data and drains batteries, and mobile radios are power-hungry enough that
+this is measurable. So:
+
+- **Pause on `document.hidden`**, and poll immediately on becoming visible rather
+  than waiting out a stale interval. This is the single biggest saving available,
+  and it also makes the loop *more* predictable, because browsers throttle
+  background timers unpredictably anyway.
+- **Geometric backoff** on a quiet project: 3s → 30s over about six polls, then
+  stop entirely. An idle project costs one request and then nothing.
+- **`busy` comes from the server**, computed from shots not yet terminal and
+  outstanding provider requests. It is the poller's on/off switch.
+- **One request at a time**, via `AbortController`, with a 10s timeout. Without
+  that, an endpoint that starts responding slowly accumulates overlapping requests
+  — each holding the session lock — until the app appears to hang.
+- **`ETag` via Laravel's `cache.headers` middleware.** Most polls return exactly
+  the bytes of the last one; a 304 sends none of them. On a metered mobile
+  connection, which is the normal case in Cameroon, that is the difference between
+  paying for those bytes hundreds of times and not at all.
+- **Honour `Retry-After` on 429** rather than guessing, and stop with a visible
+  message after five consecutive failures. Claiming to be live while silently
+  dead is worse than admitting it stopped — which is also why a 401/403/419 stops
+  the loop and says "session expired" instead of polling a login redirect forever.
+
+### The design decision worth defending
+
+**The poller does not re-render the page.** It updates a small strip in place, and
+when a stage *finishes* it triggers a full reload.
+
+Rebuilding shot cards, cost tables and warning banners in JavaScript would mean
+two rendering paths for the same data, and the one nobody looks at drifts from the
+one they do. So Blade stays the single source of truth, and the reload is the
+mechanism that keeps it true.
+
+Reloads are limited to **structural** change — the project status moved, the export
+landed, or `busy` went true→false. Reloading on every fingerprint change would
+refresh the page each time one shot of six finished, throwing away the owner's
+scroll position and any half-typed scene edit.
+
+### Two things the snapshot must not do
+
+**`fingerprint` must not contain a clock.** A snapshot that changed every second
+would make every poll look like progress, and since structural change triggers a
+reload, the page would refresh itself every three seconds forever. A test asserts
+two consecutive snapshots of an unchanged project are identical.
+
+**The endpoint must stay read-only.** It is reachable by a plain GET with no CSRF
+token, which is only safe while that holds — so a test polls three times and
+asserts status, spend, asset count and usage records are all unmoved.
+
+`Stale` deliberately does not count as busy: stale means "waiting for a decision",
+not "running", so counting it would poll forever on a project whose owner has gone
+to lunch.
+
+### Tier
+
+Not a provider question — no Tier applies. Sources are Laravel's own
+documentation for `eventStream`, Reverb and `cache.headers`, plus the PHP session
+locking literature.
+
+---
+
 ---
 
 ## Sources
@@ -1027,3 +1122,15 @@ Sound effect models, 24 Sep 2026 — search summaries; fal.ai is egress-blocked:
 - https://elevenlabs.io/docs/overview/capabilities/sound-effects
 - https://unifically.com/blogs/elevenlabs
 - https://layer.ai/models/elevenlabs-sound-effects
+
+Live progress approach, 24 Sep 2026 — framework and platform docs, not providers:
+- https://laravel.com/docs/13.x/responses *(eventStream / SSE)*
+- https://laravel.com/docs/13.x/reverb
+- https://laravel.com/framework/docs/broadcasting
+- https://www.highperformancelaravel.com/tutorials/series/writing-efficient-applications/caching-responses-with-the-cache-headers-middleware/
+- https://hergen.nl/caching-your-laravel-api-with-etag-and-conditional-requests
+- https://ma.ttias.be/php-session-locking-prevent-sessions-blocking-in-requests/
+- https://kevinchoppin.dev/blog/server-sent-events-in-php
+- https://www.php.net/manual/en/function.session-write-close.php
+- https://github.com/marmelab/battery-friendly-timer
+- https://www.w3.org/2012/10/Qualcomm-paper.pdf *(mobile radio power and polling)*
