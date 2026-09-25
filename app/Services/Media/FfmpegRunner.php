@@ -93,6 +93,44 @@ class FfmpegRunner
         return $duration;
     }
 
+    /**
+     * Mean volume of an audio file in dBFS, or null if it cannot be measured.
+     *
+     * The mix needs this because `music_bed_db` and `sfx_bed_db` are documented
+     * as levels RELATIVE TO NARRATION, and that is only what they mean if every
+     * stem's own loudness is known. Providers do not agree on output level —
+     * a TTS service may return -16 dBFS and a music model -39 — so applying a
+     * fixed attenuation to whatever arrived silently turns "6 dB under the
+     * voice" into "6 dB under something else entirely".
+     *
+     * Null rather than an exception: a stem that cannot be measured should
+     * still be mixed at its unadjusted level, because a video with an
+     * imperfect balance beats no video at all.
+     */
+    public function meanVolumeDb(string $path): ?float
+    {
+        if (! is_file($path)) {
+            return null;
+        }
+
+        $process = new Process([
+            $this->binary, '-hide_banner', '-nostdin',
+            '-i', $path,
+            '-af', 'volumedetect',
+            '-f', 'null', '-',
+        ]);
+        $process->setTimeout(120);
+        $process->run();
+
+        // volumedetect reports on stderr, and reports nothing useful for a
+        // silent file (-inf), which must not be mistaken for a quiet one.
+        if (! preg_match('/mean_volume:\s*(-?\d+(?:\.\d+)?) dB/', $process->getErrorOutput(), $match)) {
+            return null;
+        }
+
+        return (float) $match[1];
+    }
+
     public function isAvailable(): bool
     {
         $process = new Process([$this->binary, '-version']);

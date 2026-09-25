@@ -267,6 +267,27 @@ ffmpeg details to preserve: an `asplit` whose second output goes nowhere fails t
 whole graph (so narration is only split when there is a bed), and the beds mix uses
 `duration=longest` because an effect in the last scene starts late.
 
+## Bed levels are RELATIVE to narration, and that has to be enforced
+
+`music_bed_db` (-6) and `sfx_bed_db` (-12) are levels **under the narration**,
+not attenuations of whatever a provider returned. Those are the same thing only
+when every stem arrives at the same loudness, and providers do not agree: the
+local drivers alone differ by 15 dB, and a TTS service returning -16 dBFS beside
+a music model returning -39 makes "6 dB under the voice" meaningless.
+
+So `VideoAssembler` measures each stem with `FfmpegRunner::meanVolumeDb()` and
+normalises it to `narration_target_db` plus its offset. An unmeasurable stem is
+mixed at its own level rather than guessed at, a stem below the silence floor is
+never boosted (that amplifies an encoder's noise floor, not a signal), and gains
+are clamped both ways.
+
+This shipped broken: the mix measured **-37 dB mean** — every stem present,
+correctly timed, and inaudible on a laptop speaker. The tests did not catch it
+because they asserted the export *contains an audio stream* and *is the right
+length*, both of which were true. `EndToEndPipelineTest` now asserts the mix is
+above -30 dB. **An audio assertion that does not measure loudness does not test
+audio.**
+
 ## Timing: narration is the master clock
 
 FR-16/17/18. `ShotPlanner` reads the model's supported clip lengths as data,

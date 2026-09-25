@@ -26,6 +26,14 @@ use RuntimeException;
  */
 class VideoAssembler
 {
+    /** Anything quieter than this is silence, not quiet audio, and is never boosted. */
+    protected const SILENCE_FLOOR_DB = -70.0;
+
+    /** Boosting further than this amplifies a noise floor rather than a signal. */
+    protected const MAX_GAIN_DB = 30.0;
+
+    protected const MIN_GAIN_DB = -30.0;
+
     public function __construct(protected FfmpegRunner $ffmpeg) {}
 
     /**
@@ -201,8 +209,9 @@ class VideoAssembler
             $needsKey = $music !== null || $effects !== [];
 
             $chains[] = sprintf(
-                '[%d:a]aformat=channel_layouts=stereo,aresample=44100,apad,atrim=0:%.3f%s',
+                '[%d:a]aformat=channel_layouts=stereo,aresample=44100%s,apad,atrim=0:%.3f%s',
                 $index,
+                $this->gainTo($narration, $this->narrationTargetDb()),
                 $length,
                 $needsKey ? ',asplit=2[vo][key]' : '[vo]',
             );
@@ -214,17 +223,24 @@ class VideoAssembler
             // model has a ceiling and the timeline does not.
             $inputs[] = ['-stream_loop', '-1', '-i', $music->absolutePath()];
             $chains[] = sprintf(
-                '[%d:a]aformat=channel_layouts=stereo,aresample=44100,atrim=0:%.3f,volume=%.4f[bed%d]',
+                '[%d:a]aformat=channel_layouts=stereo,aresample=44100,atrim=0:%.3f%s[bed%d]',
                 $index,
                 $length,
-                $this->dbToLinear((float) config('studio.audio.music_bed_db', -6.0)),
+
+                // Relative to the NARRATION, which is what music_bed_db has
+                // always claimed to mean. Applying it as a flat attenuation of
+                // whatever the provider returned only produced that result when
+                // every stem happened to arrive at the same loudness — and they
+                // do not.
+                $this->gainTo($music, $this->narrationTargetDb() + (float) config('studio.audio.music_bed_db', -6.0)),
+
                 $index,
             );
             $bedLabels[] = "[bed{$index}]";
             $index++;
         }
 
-        $sfxGain = $this->dbToLinear((float) config('studio.audio.sfx_bed_db', -12.0));
+        $sfxTargetDb = $this->narrationTargetDb() + (float) config('studio.audio.sfx_bed_db', -12.0);
 
         foreach ($effects as $effect) {
             // Looped for the same reason as the music, and more often: the
@@ -233,7 +249,7 @@ class VideoAssembler
             $inputs[] = ['-stream_loop', '-1', '-i', $effect['path']];
 
             $chains[] = sprintf(
-                '[%d:a]aformat=channel_layouts=stereo,aresample=44100,atrim=0:%2$.3f,volume=%3$.4f,'.
+                '[%d:a]aformat=channel_layouts=stereo,aresample=44100,atrim=0:%2$.3f%3$s,'.
                 // Short fades at both ends of the scene. Without them an ambience
                 // that starts or stops mid-waveform clicks, and a click at every
                 // scene boundary is more noticeable than the ambience itself.
@@ -243,7 +259,7 @@ class VideoAssembler
                 'adelay=%5$d:all=1[bed%1$d]',
                 $index,
                 $effect['span'],
-                $sfxGain,
+                $this->gainTo($effect['path'], $sfxTargetDb),
                 max(0.0, $effect['span'] - 0.5),
                 (int) round($effect['offset'] * 1000),
             );
@@ -411,6 +427,48 @@ class VideoAssembler
         File::ensureDirectoryExists($dir);
 
         return $dir;
+    }
+
+    /**
+     * The level every mix is built around.
+     *
+     * Narration is the reference because it is the one track the video cannot
+     * do without: everything else is described in the config as a number of dB
+     * under it.
+     */
+    protected function narrationTargetDb(): float
+    {
+        return (float) config('studio.audio.narration_target_db', -18.0);
+    }
+
+    /**
+     * A `volume` filter segment that brings this file to the target level, or
+     * an empty string when it cannot be measured.
+     *
+     * Returning a FILTER FRAGMENT rather than a number so that "leave it alone"
+     * is expressible: an unmeasurable stem is mixed at its own level rather than
+     * guessed at, and a stem already at target adds no filter at all.
+     *
+     * The clamp matters more than the arithmetic. A near-silent stem measures
+     * around -90 dB, and boosting that by 70 dB would turn an encoder's noise
+     * floor into a hiss louder than the narration — so nothing is lifted more
+     * than MAX_GAIN_DB, and anything below SILENCE_FLOOR_DB is left alone
+     * entirely on the grounds that it is silence rather than quiet audio.
+     */
+    protected function gainTo(mixed $source, float $targetDb): string
+    {
+        $path = $source instanceof Asset ? $source->absolutePath() : (string) $source;
+        $measured = $this->ffmpeg->meanVolumeDb($path);
+
+        if ($measured === null || $measured <= self::SILENCE_FLOOR_DB) {
+            return '';
+        }
+
+        $gain = max(self::MIN_GAIN_DB, min(self::MAX_GAIN_DB, $targetDb - $measured));
+
+        // Below a quarter of a dB nobody can hear the difference and the filter
+        // is just another thing to go wrong.
+        return abs($gain) < 0.25 ? '' : sprintf(',volume=%.2fdB', $gain);
     }
 
     protected function dbToLinear(float $db): float

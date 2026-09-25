@@ -174,6 +174,33 @@ class EndToEndPipelineTest extends TestCase
             'Final runtime should match the narration-driven timeline.',
         );
 
+        // ── 8b. The audio is actually AUDIBLE ─────────────────────────────
+        //
+        // The assertion this file was missing, and the reason a near-silent
+        // export shipped: "contains an audio stream" and "is the right length"
+        // were both true of a mix nobody could hear.
+        //
+        // `music_bed_db` and `sfx_bed_db` are documented as levels RELATIVE TO
+        // NARRATION. They used to be applied as flat attenuations of whatever
+        // each provider returned, which is only the same thing when every stem
+        // arrives at the same loudness — and the local drivers differ by 15 dB.
+        // The result measured -37 dB: present in the file, inaudible on a
+        // laptop speaker.
+        $mix = app(FfmpegRunner::class)->meanVolumeDb($path);
+
+        $this->assertNotNull($mix, 'The export\'s loudness must be measurable.');
+        $this->assertGreaterThan(
+            -30.0,
+            $mix,
+            sprintf(
+                'The finished video measures %.1f dB mean, which is inaudible at normal volume. '.
+                'Normal video sits near %.1f dB. Check that each stem is normalised to '.
+                'studio.audio.narration_target_db before the bed offsets are applied.',
+                $mix,
+                (float) config('studio.audio.narration_target_db'),
+            ),
+        );
+
         // ── 9. Spend stayed inside the cap, and every call was logged ─────
         $this->assertLessThanOrEqual((float) $project->budget_cap_usd, $project->spentUsd());
         $this->assertGreaterThan(0, $project->usageRecords()->count(), 'NFR-5: every generation is logged.');

@@ -775,6 +775,15 @@ return [
         // before spending anything.
         'words_per_minute' => (int) env('STUDIO_NARRATION_WPM', 150),
 
+        // The level the whole mix is built around. Narration is normalised to
+        // this, and every other bed is placed relative to it — which is what
+        // the two settings below have always claimed to mean.
+        //
+        // -18 dBFS mean leaves headroom for the beds to sum on top without the
+        // limiter working hard. Raising it makes the video louder and the
+        // limiter busier; it does not make the voice clearer.
+        'narration_target_db' => (float) env('STUDIO_NARRATION_TARGET_DB', -18.0),
+
         // Music sits this many dB below narration while narration plays (FR-20).
         'music_duck_db' => (float) env('STUDIO_MUSIC_DUCK_DB', -12.0),
 
