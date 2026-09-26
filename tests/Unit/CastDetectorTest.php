@@ -152,20 +152,57 @@ class CastDetectorTest extends TestCase
         $this->assertSame([], $this->detector->namesIn($segment, ['Ada']));
     }
 
-    public function test_a_description_comes_from_the_sentence_that_introduces_the_character(): void
+    public function test_a_description_is_the_phrase_that_describes_them_not_the_sentence_they_appear_in(): void
     {
-        $script = 'The village slept. Ada wore a red cloth and never took it off. Later it rained.';
+        // The defect this replaced: describe() returned the whole first sentence
+        // containing the name, so a character reference was requested as
+        // "Character reference portrait of Ada. Thunder rolled somewhere behind
+        // the hills..." — and an image model given that renders weather.
+        $script = 'Thunder rolled behind the hills, and Ada lay awake counting the drops.';
 
-        $this->assertSame(
-            'Ada wore a red cloth and never took it off.',
+        $this->assertNull(
             $this->detector->describe('Ada', $script),
+            'A narrative sentence is not a description and must never be sent as one.',
         );
     }
 
-    public function test_a_character_with_no_prose_mention_has_no_description(): void
+    public function test_an_appositive_is_a_description(): void
+    {
+        $this->assertSame(
+            'a young trader',
+            $this->detector->describe('Ada', 'Ada, a young trader, walked to the market before dawn.'),
+        );
+    }
+
+    public function test_a_copula_is_a_description(): void
+    {
+        $this->assertSame(
+            'a tall woman with a steady voice',
+            $this->detector->describe('Ada', 'Ada was a tall woman with a steady voice.'),
+        );
+    }
+
+    public function test_a_role_before_the_name_is_a_description(): void
+    {
+        $this->assertSame('The boy', $this->detector->describe('Kofi', 'The boy Kofi watched the river rise.'));
+        $this->assertSame('Her brother', $this->detector->describe('Kofi', 'Her brother Kofi never waited.'));
+    }
+
+    public function test_a_phrase_that_names_no_person_is_refused(): void
+    {
+        // The gate the whole method rests on. Without it the copula pattern
+        // returns "a long way from home", which reads like a description,
+        // survives every other check, and is rendered at full price.
+        $this->assertNull(
+            $this->detector->describe('Ada', 'Ada was a long way from home and the road was dark.'),
+        );
+    }
+
+    public function test_a_character_with_no_descriptive_phrase_has_no_description(): void
     {
         // Null rather than an invented sentence: the owner writes it before any
-        // reference image is paid for.
+        // reference image is paid for, and the prompt omits it cleanly.
+        $this->assertNull($this->detector->describe('Ada', 'Ada counted the coins twice.'));
         $this->assertNull($this->detector->describe('Ada', 'Nobody is named here.'));
     }
 }

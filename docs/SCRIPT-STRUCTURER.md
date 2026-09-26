@@ -61,7 +61,8 @@ malformed breakdown reaching the pipeline.
 
 **Every `CharacterDraft`**
 - `name` — non-empty, canonicalised (`Ucfirst` of lowercase), ≤ 40 characters
-- `description` — non-empty trimmed string, or `null`
+- `description` — a phrase **describing the person**, or `null`. Never a
+  sentence lifted from the script
 
 ### Best-effort (heuristic — the owner edits these, FR-3/FR-4)
 
@@ -70,7 +71,28 @@ malformed breakdown reaching the pipeline.
 - the `mood` label chosen from the closed set
 - the `setting` label
 - the `action` line
-- the character `description`
+- the character `description`, which is matched against four narrow shapes and
+  returns `null` for everything else:
+
+  | shape | example | result |
+  | --- | --- | --- |
+  | appositive | `Ada, a young trader, walked…` | `a young trader` |
+  | copula | `Ada was a tall woman…` | `a tall woman` |
+  | role before the name | `Her brother Kofi never waited.` | `Her brother` |
+  | introduced by name | `there lived a girl named Ada` | `a girl` |
+
+  Every match must also contain a word from a closed list of people
+  (`CastDetector::PERSON_WORDS`). That gate is what stops `Ada was a long way
+  from home` — which matches the copula shape perfectly — from becoming a
+  description. **`null` is the safe answer and a common one**, because prose
+  frequently never says what anyone looks like.
+
+  This field feeds the character reference prompt directly, so a wrong value is
+  not cosmetic: it is a portrait generated from it, paid for at full price. It
+  previously returned the whole first sentence containing the name, which asked
+  the image model for `Character reference portrait of Ada. Thunder rolled
+  somewhere behind the hills, and Ada lay awake counting the drops against the
+  tin roof.`
 - **whether a scene has an `sfxCue` at all, and which one**
 
 `sfxCue` is the one heuristic whose false positives cost money directly: effects

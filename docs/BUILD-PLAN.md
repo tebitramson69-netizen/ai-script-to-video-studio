@@ -2,23 +2,50 @@
 
 Maps the PRD's milestones (§17) onto what exists, and what to do next in order.
 
+**Last verified against the code on 26 Sep 2026** — 368 tests, 1124 assertions,
+CI green on PHP 8.3 and 8.4.
+
 ---
 
 ## Where the milestones stand
 
 | | PRD deliverable | State |
 |---|---|---|
-| **M0** | Decisions D1–D5; payment/billing (A2); repo + queue + aggregator key | **Partial.** D1–D5 resolved (README). Repo and queue done. **A2 unsolved — no key wired.** |
+| **M0** | Decisions D1–D5; payment/billing (A2); repo + queue + aggregator key | **Partial.** D1–D5 resolved. Repo, queue and all five adapters done. **A2 unsolved — no key funded, so no request has ever left.** |
 | **M1** | Script → structured, editable scene list | **Done** |
 | **M2** | Character extraction + canonical reference lock | **Done** |
-| **M3** | Single shot → single clip via aggregator | **Done against the fake driver.** Real aggregator blocked on M0. |
-| **M4** | Narration (TTS) + one music track | **Done** (fake driver) |
+| **M3** | Single shot → single clip via aggregator | **Done in code.** Proven against the fake driver; unproven against fal. |
+| **M4** | Narration (TTS) + one music track | **Done in code**, plus per-scene sound effects, which the PRD deferred to Phase 2 |
 | **M5** | FFmpeg assembly → first exported `.mp4` | **Done** — genuinely produces a playable file |
 | **M6** | Review loop + budget cap + cost display | **Done** |
-| **M7+** | Phase 2 consistency/control → Phase 3 dialogue/multilingual | Not started |
+| **M7+** | Phase 2 consistency/control → Phase 3 dialogue/multilingual | **Partially started** — see below |
 
-The architecture for M1–M6 is complete and tested. What is missing is not
-structure — it is provider access.
+**The orchestration layer is complete.** Every FR-1 → FR-21 and NFR-1 → NFR-7 is
+implemented and referenced in code. What is missing is not structure — it is
+provider access.
+
+### What exists that this plan used to list as "next"
+
+All five capabilities have real fal adapters, sharing one client, one response
+mapper and one payload builder:
+
+| Capability | Adapter | Default model |
+|---|---|---|
+| Video | `FalVideoGenerator` | Kling 2.5 Turbo Pro (t2v + i2v), Veo 3.1 / 3.1 Fast registered |
+| Images | `FalImageGenerator` | FLUX.1 [schnell] |
+| Narration | `FalSpeechSynthesizer` | Kokoro (EN / FR), ElevenLabs v3 registered |
+| Music | `FalMusicGenerator` | Stable Audio 3 Medium, ACE-Step registered |
+| Sound effects | `FalSoundEffectGenerator` | ElevenLabs Sound Effects V2, Stable Audio 3 Small SFX registered |
+
+Also done since this plan was written: the script structurer was promoted from a
+stub to a specified, validated, deterministic v1 (`docs/SCRIPT-STRUCTURER.md`);
+per-scene sound effects are generated, positioned and mixed; and queued stages
+report live progress by polling rather than needing a refresh.
+
+**Every adapter is Tier B.** They are written from documented API shapes and
+tested only against simulated HTTP, because fal.ai is unreachable from the
+environment they were built in. "Should work" is not "does work" — which is what
+Step 2 below exists to settle.
 
 ---
 
@@ -103,56 +130,89 @@ Only once (3) succeeds does the next section become worth starting.
 
 ---
 
-> **Provider work now follows `docs/IMPLEMENTATION-PLAN.md`** (21 Sep 2026),
-> which supersedes the steps below for anything adapter-related. Decision: fal.ai
-> primary, Replicate the reversible fallback, architecture built before payment.
-> Steps 1–5 of that plan are already done.
+> **`docs/IMPLEMENTATION-PLAN.md`** (21 Sep 2026) recorded the adapter strategy:
+> fal.ai primary, Replicate the reversible fallback, architecture built before
+> payment. **That plan is now fully executed** — all five adapters exist. It is
+> kept for the reasoning; the steps below are what remains.
 
 ## Next steps, in order
 
-### Step 1 — Real video adapter (unblocks everything)
-Implement `VideoGenerator` against the funded aggregator. Follow
-`docs/PROVIDERS.md`. Get `supportedClipLengths()` right — the timing engine
-depends on it being truthful.
+Everything in this list is blocked on the payment checklist above, except where
+marked.
 
-*Done when:* one shot renders through the real provider, the clip plays, and the
-recorded `cost_usd` matches the provider dashboard.
+### Step 1 — Fund the account
+The smallest top-up fal allows. Read that figure off fal's own billing page; it
+is still unverified here.
 
-### Step 2 — Real TTS adapter
-Implement `SpeechSynthesizer` (ElevenLabs or equivalent). Return the **measured**
-duration, not the requested one — it is the master clock.
+*Done when:* a charge has cleared and the dashboard shows credit.
 
-*Done when:* an exported video has real narration and the runtime still matches
-the narration-driven timeline.
+### Step 2 — Capture the real payload shapes **before rendering anything**
+```
+php artisan studio:capture-fal-shapes --dry-run   # free, prints the exact request
+php artisan studio:capture-fal-shapes             # one small real generation
+```
+The dry run costs nothing and shows byte-for-byte what a real render would send,
+because the probe is built through the same `FalPayloadBuilder` the adapter uses.
+The real run turns five assumed response shapes into fixtures.
 
-### Step 3 — Real image and music adapters
-Same pattern. Character reference quality is what P2 consistency work builds on,
-so it is worth spending a little time on the reference prompt here.
+*Done when:* the captured JSON is committed as fixtures and `FalResponseMapper`
+is corrected against it. **This is the cheapest possible way to find out that a
+field name is wrong** — the alternative is discovering it four clips into a paid
+render.
+
+The values most likely to be wrong, in order of what they cost you:
+
+| Value | Why it matters |
+|---|---|
+| Stable Audio 3's duration field (`duration` vs `seconds_total`) | 422 mid-run |
+| ACE-Step's real maximum length | 422 mid-run |
+| Stable Audio 3 Small SFX's field names and price | 422 mid-run; price unpublished |
+| Whether ElevenLabs' `loop` behaves as documented at 22s | audible seam |
+| Kling i2v $0.07/s, Kokoro endpoint ids, FLUX per-image price | cost estimate drifts |
+
+### Step 3 — One real clip
+Flip `STUDIO_VIDEO_DRIVER=fal` only. Render a single 5-second shot.
+
+*Done when:* the clip plays and the recorded `cost_usd` matches the fal
+dashboard. If those disagree, fix `config/studio.php` before going further — the
+budget cap is only as honest as its rates.
 
 ### Step 4 — First real end-to-end video, costed
-Run one 60-second folk tale on a **$10 cap**. Compare actual spend against the
-PRD's $7.10 clean-run estimate (§13). Correct the price constants in
-`config/studio.php` from the real invoice.
+Flip the remaining four drivers. Run one 60-second folk tale on a **$10 cap**.
+Compare actual spend against the ~$4.40 estimate, and correct the price
+constants from the real invoice.
 
 *This is the real Phase 1 completion.* Everything before it is rehearsal.
 
-### Step 5 — ~~NFR-7 retention~~ (done)
-`studio:purge-intermediates` plus a storage panel on each project page. Worth
-re-checking once real clips exist: the numbers here are small because fake clips
-are small, and a single real 8-second 1080p clip is orders of magnitude larger.
-Consider running the command on a schedule with `--days=30`.
+### Step 5 — Re-check retention against real files
+`studio:purge-intermediates` works, but the numbers it reports are small because
+fake clips are small. One real 8-second 1080p clip is orders of magnitude larger.
+Consider scheduling it with `--days=30`.
 
-### Step 6 — Progress visibility
-Queued stages currently update on refresh. Once real renders take minutes rather
-than seconds, add polling on the project page.
+### Step 6 — Phase 2 remainder *(not blocked on payment)*
+Per-shot prompt editing, scene re-ordering, per-project model selection and
+per-scene SFX are **already done**. What is left of PRD §7:
 
-### Step 7 — Phase 2 (PRD §7)
-Multi-angle character reference sheets (FR-7), per-shot prompt editing and
-re-ordering, per-scene SFX on the timeline, per-video model selection.
+- **FR-7 multi-angle character reference sheets.** `GenerationMode::ReferenceToVideo`
+  and `ClipRequest::$referenceImagePaths` already exist for this; nothing
+  generates the sheet.
 
-### Step 8 — Phase 3
-Lip-sync, multilingual narration (EN / FR / Pidgin), caption burn-in.
-`projects.language` already exists for this.
+### Step 7 — Phase 3 *(not started)*
+Lip-sync, caption burn-in, and Pidgin narration. `projects.language` exists and
+the speech registry already ships English and French, so multilingual is
+partly done — Kokoro would need a Pidgin endpoint, or a different model.
+
+---
+
+## Known rough edges
+
+Neither blocks anything; both are worth knowing.
+
+- **The live progress strip does not cover the character-reference stage.**
+  `ProgressSnapshot::busy` is computed from shots in flight and outstanding
+  provider requests, and generating candidates is neither, so that one stage
+  still needs a manual refresh.
+- **XAMPP cannot run this in production.** Fine for building; see below.
 
 ---
 
@@ -161,7 +221,10 @@ Lip-sync, multilingual narration (EN / FR / Pidgin), caption burn-in.
 XAMPP is fine for building. It is not enough to run this (PRD A4): queued
 generation needs an always-on worker.
 
-- a small VPS with PHP 8.2+, MySQL, FFmpeg
+- a small VPS with **PHP 8.3 or 8.4** (Laravel 13 dropped 8.2), MySQL, FFmpeg.
+  Worth stating plainly because it catches people: XAMPP 8.2.x ships PHP 8.2 and
+  **cannot run this app at all**, however it is invoked. Install PHP 8.3+
+  alongside it for the CLI, or upgrade XAMPP.
 - `queue:work` under Supervisor or systemd, **not** in a browser tab
 - Apache/nginx DocumentRoot at `public/`
 - `APP_DEBUG=false`, HTTPS, `.env` unreadable from the web

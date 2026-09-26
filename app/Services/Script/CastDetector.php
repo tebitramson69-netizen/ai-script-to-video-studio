@@ -20,6 +20,29 @@ class CastDetector
 
     protected const CUE_WEIGHT = 3;
 
+    /** A reference prompt is a sentence, not a paragraph. */
+    protected const MAX_DESCRIPTION_LENGTH = 80;
+
+    /**
+     * Words that mean "a person".
+     *
+     * A description is only accepted if it contains one. Closed on purpose, the
+     * same way the sound-effect cues are: an open-ended match produces confident
+     * nonsense, and nonsense here is a portrait generated from it.
+     *
+     * @var list<string>
+     */
+    protected const PERSON_WORDS = [
+        'boy', 'girl', 'man', 'woman', 'child', 'baby', 'lad',
+        'brother', 'sister', 'mother', 'father', 'son', 'daughter',
+        'uncle', 'aunt', 'grandmother', 'grandfather', 'cousin', 'widow',
+        'chief', 'elder', 'king', 'queen', 'prince', 'princess',
+        'farmer', 'trader', 'teacher', 'student', 'pupil', 'hunter',
+        'fisherman', 'healer', 'doctor', 'nurse', 'soldier', 'driver',
+        'tailor', 'blacksmith', 'merchant', 'servant', 'guard',
+        'friend', 'neighbour', 'neighbor', 'stranger', 'traveller', 'traveler',
+    ];
+
     protected const PROSE_WEIGHT = 1;
 
     /** How many sentence openings a name needs before it counts as a subject. */
@@ -146,17 +169,79 @@ class CastDetector
      * the character. The owner edits this before any reference image is paid for,
      * so it only has to be a useful starting point.
      */
+    /**
+     * A phrase that DESCRIBES this character, or null.
+     *
+     * This feeds straight into the character reference prompt, so it is worth
+     * being clear about what it must not do. It used to return the whole first
+     * sentence containing the name, which meant Ada's portrait was requested as:
+     *
+     *   "Character reference portrait of Ada. Thunder rolled somewhere behind
+     *    the hills, and Ada lay awake counting the drops against the tin roof."
+     *
+     * An image model given that renders weather. It is not a bad description —
+     * it is not a description at all, and on a funded account it is paid for.
+     *
+     * So this now matches three narrow shapes and returns null for everything
+     * else, and every match must contain a word from a closed list of PEOPLE
+     * (PERSON_WORDS). That last rule is what stops "Ada was a long way from
+     * home" becoming a description. Null is the safe answer and a common one:
+     * the field is editable precisely because prose often never says what
+     * anyone looks like.
+     */
     public function describe(string $name, string $script): ?string
     {
-        foreach (preg_split('/(?<=[.!?])\s+|\n/', $script) ?: [] as $sentence) {
-            $sentence = trim($sentence);
+        $n = preg_quote($name, '/');
+        $people = implode('|', self::PERSON_WORDS);
+        $limit = self::MAX_DESCRIPTION_LENGTH;
 
-            if ($sentence === '') {
-                continue;
+        $patterns = [
+            // Appositive — "Ada, a young trader, walked to the market."
+            '/\b'.$n.'\s*,\s*((?:an?|the)\s+[^,.;:!?\n]{2,'.$limit.'}?)\s*,/iu',
+
+            // Copula — "Ada was a tall woman."
+            '/\b'.$n.'\s+(?:was|is|had\s+been)\s+((?:an?|the)\s+[^,.;:!?\n]{2,'.$limit.'}?)[,.;:!?\n]/iu',
+
+            // Role before the name — "the boy Kofi", "her brother Kofi".
+            '/\b((?:an?|the|his|her|their|old|young|elderly)\s+(?:(?:old|young|tall|small|little)\s+)?(?:'.$people.'))\s+'.$n.'\b/iu',
+
+            // Introduced by name — "there lived a girl named Ada", "a man
+            // called Musa". The commonest way a folk tale opens, and the
+            // phrasing the prose fixture uses.
+            '/\b((?:an?|the)\s+(?:(?:old|young|tall|small|little)\s+)?(?:'.$people.'))\s+(?:named|called)\s+'.$n.'\b/iu',
+        ];
+
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $script, $match) === 1) {
+                $phrase = $this->tidyDescription($match[1] ?? '');
+
+                if ($phrase !== null) {
+                    return $phrase;
+                }
             }
+        }
 
-            if (preg_match('/\b'.preg_quote($name, '/').'\b/iu', $sentence)) {
-                return mb_substr($sentence, 0, 300);
+        return null;
+    }
+
+    /**
+     * Accept a captured phrase only if it actually names a person.
+     *
+     * The gate the whole method rests on. Without it the copula pattern happily
+     * returns "a long way from home", which reads like a description, survives
+     * every other check, and is rendered at full price.
+     */
+    protected function tidyDescription(string $phrase): ?string
+    {
+        $phrase = trim(preg_replace('/\s+/u', ' ', $phrase) ?? '', " \t\n\r,;:.");
+
+        if ($phrase === '' || mb_strlen($phrase) > self::MAX_DESCRIPTION_LENGTH) {
+            return null;
+        }
+
+        foreach (self::PERSON_WORDS as $word) {
+            if (preg_match('/\b'.$word.'s?\b/iu', $phrase) === 1) {
+                return $phrase;
             }
         }
 

@@ -118,13 +118,18 @@ class HeuristicScriptStructurerTest extends TestCase
         $this->assertStringContainsString('the red cloth she always wore', $scene->narration);
     }
 
-    public function test_a_character_description_comes_from_the_script(): void
+    public function test_a_character_description_describes_them_rather_than_quoting_the_script(): void
     {
         $ada = $this->structure('prose-folk-tale')->characters[0];
 
         $this->assertSame('Ada', $ada->name);
-        $this->assertNotNull($ada->description);
-        $this->assertStringContainsString('Ada', $ada->description);
+
+        // "there lived a girl named Ada" -> "a girl". The description feeds the
+        // reference prompt directly, so it has to be a phrase about the person,
+        // not the sentence they happen to appear in. It used to be the latter,
+        // which asked the image model for a village and a river.
+        $this->assertSame('a girl', $ada->description);
+        $this->assertStringNotContainsString('village', (string) $ada->description);
     }
 
     // ---- Screenplay and dialogue ------------------------------------------
