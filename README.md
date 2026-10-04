@@ -83,6 +83,36 @@ script never calls a generation endpoint. Exit codes: `0` verified, `1`
 certificates still wrong, `2` certificates configured but the host unreachable
 from this machine.
 
+### Which terminal, and what resets in a new one
+
+Every `artisan` command runs from the project root, with an interpreter that is
+**not** the one on `PATH` while XAMPP 8.2 is installed. Two things reset when a
+window closes — the working directory and the interpreter — so paste this first
+in any new terminal:
+
+```powershell
+cd C:\xampp1\htdocs\ai-script-to-video-studio; $php = (Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\PHP.PHP.8.4*\php.exe" | Select-Object -First 1).FullName; & $php --version
+```
+
+If that prints 8.2.x rather than 8.3+, stop: nothing will run, because
+`vendor/composer/platform_check.php` refuses before Laravel boots. The setup
+script above prints the interpreter path but cannot set the variable for you —
+it runs in its own scope.
+
+Generating anything needs **two** processes, because every pipeline stage is a
+queued job (PRD A4):
+
+| Window | Command |
+| --- | --- |
+| 1 | `& $php artisan serve` → <http://127.0.0.1:8000> |
+| 2 | `& $php artisan queue:work` |
+| 3 | everything else |
+
+Without window 2 the UI sits at *queued* indefinitely and reports no error,
+because nothing is wrong — there is simply no worker. `& $php artisan dev` runs
+the server, the queue, logs and vite in one window instead; it needs Node for the
+vite process.
+
 ### VS Code
 
 Open `studio.code-workspace` rather than the bare folder — it hides `vendor/`
