@@ -8,7 +8,9 @@ use App\Contracts\ProviderException;
 use App\Enums\AspectRatio;
 use App\Enums\GenerationMode;
 use App\Enums\VideoResolution;
+use App\Integrations\Fal\FalClient;
 use App\Integrations\Fal\FalPayloadBuilder;
+use App\Integrations\Fal\FalResponseMapper;
 use App\Services\Provider\ModelRegistry;
 use Illuminate\Console\Command;
 use Illuminate\Http\Client\Response;
@@ -62,6 +64,20 @@ class CaptureFalShapesCommand extends Command
     protected ModelCapabilities $capabilities;
 
     protected int $rejections = 0;
+
+    /**
+     * Status of the most recent non-2xx, so firstThatAnswers() can tell a wrong
+     * URL shape from a real refusal without call_() having to return both a
+     * response and a reason.
+     */
+    protected ?int $lastStatus = null;
+
+    /**
+     * Kept in step with FalClient::SHAPE_MISMATCH_STATUSES deliberately: if the
+     * probe and the adapter disagree about what "wrong URL" looks like, the
+     * probe stops predicting the adapter, which is its only purpose.
+     */
+    protected const SHAPE_MISMATCH_STATUSES = [404, 405];
 
     public function handle(): int
     {
@@ -185,12 +201,29 @@ class CaptureFalShapesCommand extends Command
         $this->components->twoColumnDetail('Request id', $requestId);
 
         // ---- 2. Status -----------------------------------------------------
-        $statusUrl = "{$base}/{$model}/requests/{$requestId}/status";
+        // Resolved through the same authority the adapter uses, not built by
+        // hand. The first version of this command constructed
+        // {queue}/{model}/requests/{id}/status directly and got a 405 from the
+        // live provider - which looked like a broken adapter when the adapter
+        // would have followed fal's own status_url and worked. A probe that can
+        // fail where the thing it validates succeeds is worse than no probe.
+        $statusCandidates = $this->statusCandidates($submit->json() ?? [], $model, $requestId);
+
+        $this->components->twoColumnDetail(
+            'Status URL',
+            $statusCandidates[0].(count($statusCandidates) > 1 ? ' (+'.(count($statusCandidates) - 1).' fallback)' : ''),
+        );
+
+        $statusUrl = null;
         $capturedInProgress = false;
         $terminal = null;
 
         for ($poll = 1; $poll <= (int) $this->option('max-polls'); $poll++) {
-            $status = $this->call_('GET', $statusUrl, $key);
+            // Only the first poll walks the candidates; once one answers, that
+            // is the URL for the rest of this request's life.
+            $status = $statusUrl === null
+                ? $this->firstThatAnswers($statusCandidates, $key, $statusUrl)
+                : $this->call_('GET', $statusUrl, $key);
 
             if ($status === null) {
                 return self::FAILURE;
@@ -227,11 +260,18 @@ class CaptureFalShapesCommand extends Command
         $this->components->info('Status captured → 02-status-in-progress.json, 03-status-complete.json');
 
         // ---- 3. Result -----------------------------------------------------
-        $result = $this->call_('GET', "{$base}/{$model}/requests/{$requestId}", $key);
+        $resolved = null;
+        $result = $this->firstThatAnswers(
+            $this->resultCandidates($submit->json() ?? [], $model, $requestId),
+            $key,
+            $resolved,
+        );
 
         if ($result === null) {
             return self::FAILURE;
         }
+
+        $this->components->twoColumnDetail('Result URL', (string) $resolved);
 
         $this->save('04-result.json', $result->json() ?? ['raw' => $result->body()]);
         $this->components->info('Result captured → 04-result.json');
@@ -457,9 +497,105 @@ class CaptureFalShapesCommand extends Command
     }
 
     /**
+     * Where to ask for this request's status, best source first.
+     *
+     * fal returns a status_url in the submit body and is authoritative about
+     * its own routing, so that is always preferred. FalClient::requestUrls()
+     * supplies the fallbacks, which keeps one implementation of the awkward
+     * part: a five-segment model id addresses its requests under only the first
+     * two segments, and this command must not re-guess that independently of
+     * the adapter.
+     *
+     * @param  array<string, mixed>  $submitBody
+     * @return list<string>
+     */
+    protected function statusCandidates(array $submitBody, string $model, string $requestId): array
+    {
+        $fromProvider = $this->mapper()->statusUrl($submitBody);
+
+        return $this->dedupe([
+            ...($fromProvider === null ? [] : [$fromProvider]),
+            ...array_map(
+                fn (string $base) => $base.'/status',
+                $this->client()->requestUrls($model, $requestId),
+            ),
+        ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $submitBody
+     * @return list<string>
+     */
+    protected function resultCandidates(array $submitBody, string $model, string $requestId): array
+    {
+        $fromProvider = $this->mapper()->resultUrl($submitBody);
+        $bare = $this->client()->requestUrls($model, $requestId);
+
+        // Mirrors FalClient::result(): sources disagree on whether the output
+        // sits at the bare request URL or under /response, so both are tried.
+        return $this->dedupe([
+            ...($fromProvider === null ? [] : [$fromProvider]),
+            ...$bare,
+            ...array_map(fn (string $url) => $url.'/response', $bare),
+        ]);
+    }
+
+    /**
+     * The first candidate that is not a shape mismatch.
+     *
+     * Falls through on the statuses FalClient treats the same way, so the probe
+     * and the adapter agree about what "wrong URL" looks like. Anything else -
+     * a 401, a 422 - is answered identically by every candidate, so it is
+     * reported rather than retried.
+     *
+     * @param  list<string>  $urls
+     */
+    protected function firstThatAnswers(array $urls, string $key, ?string &$resolved): ?Response
+    {
+        foreach ($urls as $index => $url) {
+            $response = $this->call_('GET', $url, $key, quiet: $index < count($urls) - 1);
+
+            if ($response !== null) {
+                $resolved = $url;
+
+                return $response;
+            }
+
+            if (! in_array($this->lastStatus, self::SHAPE_MISMATCH_STATUSES, true)) {
+                return null;
+            }
+
+            if ($index < count($urls) - 1) {
+                $this->line("  {$url} -> {$this->lastStatus}, trying the next shape");
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  list<string>  $urls
+     * @return list<string>
+     */
+    protected function dedupe(array $urls): array
+    {
+        return array_values(array_unique(array_filter($urls, fn (string $url) => trim($url) !== '')));
+    }
+
+    protected function client(): FalClient
+    {
+        return app(FalClient::class);
+    }
+
+    protected function mapper(): FalResponseMapper
+    {
+        return $this->client()->mapper();
+    }
+
+    /**
      * @param  array<string, mixed>|null  $payload
      */
-    protected function call_(string $method, string $url, string $key, ?array $payload = null): ?Response
+    protected function call_(string $method, string $url, string $key, ?array $payload = null, bool $quiet = false): ?Response
     {
         try {
             $response = Http::withHeaders(['Authorization' => "Key {$key}"])
@@ -467,13 +603,25 @@ class CaptureFalShapesCommand extends Command
                 ->timeout(120)
                 ->send($method, $url, $payload === null ? [] : ['json' => $payload]);
         } catch (\Throwable $e) {
+            $this->lastStatus = null;
             $this->components->error("{$method} {$url} failed: {$e->getMessage()}");
 
             return null;
         }
 
         if ($response->successful()) {
+            $this->lastStatus = null;
+
             return $response;
+        }
+
+        $this->lastStatus = $response->status();
+
+        // A candidate URL that is merely the wrong shape is not news: the caller
+        // is walking a list and will say so in one line. Reporting each as an
+        // ERROR would bury the one failure that matters.
+        if ($quiet && in_array($response->status(), self::SHAPE_MISMATCH_STATUSES, true)) {
+            return null;
         }
 
         $this->components->error("{$method} {$url} returned {$response->status()}.");
@@ -495,9 +643,9 @@ class CaptureFalShapesCommand extends Command
             ],
         );
 
-        if ($response->status() === 404) {
+        if (in_array($response->status(), self::SHAPE_MISMATCH_STATUSES, true)) {
             $this->line('');
-            $this->line('A 404 most likely means the URL pattern is wrong rather than the model id.');
+            $this->line('Every candidate URL was refused, so the pattern is wrong rather than the model id.');
             $this->line('Check the model page\'s API tab and set FAL_QUEUE_URL / --model accordingly.');
         }
 

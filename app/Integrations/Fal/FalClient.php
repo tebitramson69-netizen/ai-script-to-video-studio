@@ -6,6 +6,7 @@ use App\Contracts\ProviderException;
 use App\Enums\ProviderFailureReason;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 
@@ -23,21 +24,37 @@ use Illuminate\Support\Facades\Http;
  *   GET  {queue}/{model}/requests/{id}/status     -> {status: IN_QUEUE|IN_PROGRESS|COMPLETED}
  *   GET  {queue}/{model}/requests/{id}            -> the model output
  *
- * UNVERIFIED from this codebase — fal.ai is unreachable through the build
- * environment's egress policy, so these URLs come from fal's published pattern
- * and not from an observed call. Two things make that survivable:
+ * The submit line is VERIFIED against the live account (2026-10-04): that
+ * endpoint and payload were accepted, including a numeric `duration`, which
+ * fal's own documentation describes as a string. The request URLs below are
+ * reconstructions, and two things make relying on them survivable:
  *
  *   1. When the submit response carries status_url / response_url, those are
  *      used verbatim. fal is authoritative about its own routing.
  *   2. When it does not (a worker that restarted after submitting holds only
  *      the id), the URL is constructed — and because a multi-segment model id
- *      such as fal-ai/kling-video/v2.5-turbo/pro/text-to-video is documented to
- *      address its requests under just the first two segments, both forms are
- *      tried before giving up. A 404 on one is not an error; a 404 on all of
- *      them is.
+ *      such as fal-ai/kling-video/v2.5-turbo/pro/text-to-video addresses its
+ *      requests under just the first two segments, both forms are tried before
+ *      giving up. A shape mismatch on one is not an error; one on all of them
+ *      is. See SHAPE_MISMATCH_STATUSES: fal answers 405 rather than 404 there,
+ *      which this got wrong until a live call said otherwise.
  */
 class FalClient
 {
+    /**
+     * Statuses that mean "this URL shape is wrong, try the next candidate".
+     *
+     * 404 was the only one here until a live call proved it insufficient.
+     * fal answers a GET on the five-segment request URL with 405, because the
+     * wrong shape still matches the POST-only submit route, so the provider
+     * refuses the method rather than reporting a missing resource.
+     *
+     * Measured against the live account on 2026-10-04:
+     *   GET {queue}/fal-ai/kling-video/v2.5-turbo/pro/text-to-video/requests/{id}/status
+     *   -> 405 Method Not Allowed
+     */
+    protected const SHAPE_MISMATCH_STATUSES = [404, 405];
+
     public function __construct(
         protected string $apiKey,
         protected string $queueUrl,
@@ -215,10 +232,10 @@ class FalClient
                 return $this->decode($response, $url);
             }
 
-            // Only a 404 is worth trying the next shape for. A 401 or a 429
-            // will answer identically on every URL, and retrying it just
-            // doubles the rate-limit pressure.
-            if ($response->status() !== 404) {
+            // Only a shape mismatch is worth trying the next candidate for. A
+            // 401 or a 429 will answer identically on every URL, and retrying
+            // it just doubles the rate-limit pressure.
+            if (! in_array($response->status(), self::SHAPE_MISMATCH_STATUSES, true)) {
                 throw $this->exceptionFor($response, $url);
             }
 
@@ -254,7 +271,31 @@ class FalClient
 
             // throw: false because classification below is richer than an
             // exception on any non-2xx: a 402 and a 429 need opposite handling.
-            ->retry(2, 500, throw: false);
+            ->retry(2, 500, $this->retryWhen(), throw: false);
+    }
+
+    /**
+     * Retry only what a second attempt could plausibly fix.
+     *
+     * Without this, retry(2) resends every non-2xx. A 401 does not become
+     * authorised and a 402 does not become funded by asking again, so the
+     * second call is pure waste — and on a 404 or 405 it doubles the cost of
+     * walking the candidate URL list, which is the normal path for a cold
+     * cache rather than an error.
+     */
+    protected function retryWhen(): \Closure
+    {
+        return function (\Throwable $e): bool {
+            if ($e instanceof ConnectionException) {
+                return true;
+            }
+
+            $status = $e instanceof RequestException ? $e->response->status() : null;
+
+            // Rate limits and provider-side faults are the two failures that a
+            // short wait genuinely changes.
+            return $status === 429 || ($status !== null && $status >= 500);
+        };
     }
 
     /**

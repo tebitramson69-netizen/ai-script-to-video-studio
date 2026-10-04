@@ -274,6 +274,47 @@ class FalVideoGeneratorTest extends TestCase
         Http::assertSent(fn (Request $r) => $r->url() === $short);
     }
 
+    public function test_a_cold_cache_falls_back_after_a_405_which_is_what_fal_actually_returns(): void
+    {
+        // Measured against the live account on 2026-10-04: a GET to the
+        // five-segment request URL answers 405, not 404. The wrong shape still
+        // matches the POST-only submit route, so the provider refuses the
+        // method rather than reporting a missing resource.
+        //
+        // The fallback chain treated 404 as its only "wrong shape" signal,
+        // which made this path dead against the real provider: a worker that
+        // restarted mid-generation would throw here and never try the short
+        // form, abandoning a clip fal had already billed for.
+        $long = 'https://queue.fal.run/fal-ai/kling-video/v2.5-turbo/pro/text-to-video/requests/req-8/status';
+        $short = 'https://queue.fal.run/fal-ai/kling-video/requests/req-8/status';
+
+        Http::fake([
+            $long => Http::response(['detail' => 'Method Not Allowed'], 405),
+            $short => Http::response(['status' => 'COMPLETED']),
+        ]);
+
+        $this->assertSame(ProviderRequestStatus::Completed, $this->generator()->checkStatus('req-8'));
+
+        Http::assertSent(fn (Request $r) => $r->url() === $short);
+    }
+
+    public function test_an_auth_failure_is_not_retried_against_every_candidate_url(): void
+    {
+        // The counterweight to the 405 fall-through: a 401 answers identically
+        // on every candidate, so trying them all only multiplies the failed
+        // calls. Only a shape mismatch earns a second attempt.
+        Http::fake(['*' => Http::response(['detail' => 'Unauthorized'], 401)]);
+
+        try {
+            $this->generator()->checkStatus('req-9');
+            $this->fail('An unauthorised status check should throw.');
+        } catch (ProviderException $e) {
+            $this->assertSame(ProviderFailureReason::Authentication, $e->reason);
+        }
+
+        Http::assertSentCount(1);
+    }
+
     public function test_fetch_downloads_the_clip_and_records_what_it_cost(): void
     {
         Http::fake([

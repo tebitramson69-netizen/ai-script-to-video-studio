@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Contracts\Data\ClipRequest;
 use App\Integrations\Fal\FalPayloadBuilder;
 use App\Services\Provider\ModelRegistry;
+use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
@@ -272,6 +273,123 @@ class CaptureFalShapesCommandTest extends TestCase
         // The request that caused it has to be beside it, or the rejection
         // names a field without saying what was sent for it.
         $this->assertFileExists($out.'/00-request-sent.json');
+
+        File::deleteDirectory($out);
+    }
+
+    public function test_the_probe_follows_fals_own_status_and_result_urls(): void
+    {
+        // The bug this closes cost a real $0.35. The command built
+        // {queue}/{model}/requests/{id}/status by hand, which the live provider
+        // answered with 405 - while the adapter, which follows the status_url
+        // fal returns, would have worked. A probe that fails where the code it
+        // validates succeeds reports a fault that does not exist.
+        config(['studio.fal.key' => 'test-key']);
+
+        $out = storage_path('framework/testing/fal-capture-follows-urls');
+        File::deleteDirectory($out);
+
+        Http::fake([
+            'queue.fal.run/fal-ai/kling-video/v2.5-turbo/pro/text-to-video' => fn () => Http::response([
+                'request_id' => 'req-live-1',
+                'status_url' => 'https://queue.fal.run/fal-ai/kling-video/requests/req-live-1/status',
+                'response_url' => 'https://queue.fal.run/fal-ai/kling-video/requests/req-live-1',
+            ]),
+            'queue.fal.run/fal-ai/kling-video/requests/req-live-1/status' => fn () => Http::response([
+                'status' => 'COMPLETED',
+            ]),
+            'queue.fal.run/fal-ai/kling-video/requests/req-live-1' => fn () => Http::response([
+                'video' => ['url' => 'https://cdn.fal.media/clip.mp4'],
+            ]),
+        ]);
+
+        $this->artisan('studio:capture-fal-shapes', [
+            '--model' => 'kling-2-5-turbo-pro',
+            '--out' => $out,
+        ])
+            ->expectsConfirmation('Spend that and capture the shapes?', 'yes')
+            ->assertSuccessful();
+
+        // The five-segment URL the old code built must never be requested.
+        Http::assertNotSent(fn (Request $r) => str_contains(
+            $r->url(),
+            'v2.5-turbo/pro/text-to-video/requests',
+        ));
+
+        Http::assertSent(fn (Request $r) => $r->url()
+            === 'https://queue.fal.run/fal-ai/kling-video/requests/req-live-1/status');
+
+        $this->assertFileExists($out.'/04-result.json');
+
+        File::deleteDirectory($out);
+    }
+
+    public function test_the_probe_falls_through_a_405_to_the_short_request_form(): void
+    {
+        // A worker that restarted holds only the id, so the URL has to be
+        // reconstructed. fal answers the long form with 405, not 404 - measured
+        // against the live account - so the probe must treat that as "wrong
+        // shape, try the next" exactly as FalClient does.
+        config(['studio.fal.key' => 'test-key']);
+
+        $out = storage_path('framework/testing/fal-capture-405-fallthrough');
+        File::deleteDirectory($out);
+
+        $long = 'https://queue.fal.run/fal-ai/kling-video/v2.5-turbo/pro/text-to-video/requests/req-live-2/status';
+        $short = 'https://queue.fal.run/fal-ai/kling-video/requests/req-live-2/status';
+
+        Http::fake([
+            // No status_url in the submit body: the cold-cache case.
+            'queue.fal.run/fal-ai/kling-video/v2.5-turbo/pro/text-to-video' => fn () => Http::response([
+                'request_id' => 'req-live-2',
+            ]),
+            $long => fn () => Http::response(['detail' => 'Method Not Allowed'], 405),
+            $short => fn () => Http::response(['status' => 'COMPLETED']),
+            '*' => fn () => Http::response(['video' => ['url' => 'https://cdn.fal.media/clip.mp4']]),
+        ]);
+
+        $this->artisan('studio:capture-fal-shapes', [
+            '--model' => 'kling-2-5-turbo-pro',
+            '--out' => $out,
+        ])
+            ->expectsConfirmation('Spend that and capture the shapes?', 'yes')
+            ->expectsOutputToContain('trying the next shape')
+            ->assertSuccessful();
+
+        Http::assertSent(fn (Request $r) => $r->url() === $short);
+
+        File::deleteDirectory($out);
+    }
+
+    public function test_a_real_refusal_is_not_mistaken_for_a_wrong_url(): void
+    {
+        // The counterweight: a 401 answers identically on every candidate, so
+        // walking the list would just repeat the failure. It must stop and
+        // report, and the body must still be captured.
+        config(['studio.fal.key' => 'test-key']);
+
+        $out = storage_path('framework/testing/fal-capture-real-refusal');
+        File::deleteDirectory($out);
+
+        Http::fake([
+            'queue.fal.run/fal-ai/kling-video/v2.5-turbo/pro/text-to-video' => fn () => Http::response([
+                'request_id' => 'req-live-3',
+            ]),
+            '*' => fn () => Http::response(['detail' => 'Unauthorized'], 401),
+        ]);
+
+        $this->artisan('studio:capture-fal-shapes', [
+            '--model' => 'kling-2-5-turbo-pro',
+            '--out' => $out,
+        ])
+            ->expectsConfirmation('Spend that and capture the shapes?', 'yes')
+            ->doesntExpectOutputToContain('trying the next shape')
+            ->assertFailed();
+
+        $this->assertNotEmpty(
+            File::glob($out.'/99-rejected-*.json'),
+            'The 401 body was not captured.',
+        );
 
         File::deleteDirectory($out);
     }
