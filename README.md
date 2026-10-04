@@ -26,7 +26,7 @@ composer install
 cp .env.example .env
 php artisan key:generate          # tests fail without an APP_KEY
 php artisan migrate
-php artisan test                  # 300 tests; renders a real .mp4
+php artisan test                  # 370 tests; renders a real .mp4
 php artisan serve                 # http://127.0.0.1:8000
 php artisan studio:create-owner   # there is no public sign-up (§14)
 ```
@@ -43,6 +43,30 @@ looks. On XAMPP/Windows set the full path in `.env`:
 FFMPEG_BINARY=C:\ffmpeg\bin\ffmpeg.exe
 FFPROBE_BINARY=C:\ffmpeg\bin\ffprobe.exe
 ```
+
+**On Windows, PHP needs a CA bundle before it can reach any provider.** PHP for
+Windows does not read the Windows certificate store, and the standalone builds
+(WinGet, php.net) ship no root certificates. Every HTTPS call then fails with:
+
+```
+cURL error 60: SSL certificate ... unable to get local issuer certificate
+```
+
+It looks like a provider or network fault and is neither — it is a local trust
+configuration, and it stops the request before anything is sent, so it costs
+nothing but a confusing hour. XAMPP already ships a bundle you can point at. In
+the `php.ini` that `php --ini` reports:
+
+```ini
+curl.cainfo = "C:\xampp\apache\bin\curl-ca-bundle.crt"
+openssl.cafile = "C:\xampp\apache\bin\curl-ca-bundle.crt"
+```
+
+Set both: `curl.cainfo` covers Guzzle and therefore Laravel's HTTP client, while
+`openssl.cafile` covers PHP's own stream wrappers. Without XAMPP, download
+`cacert.pem` from <https://curl.se/docs/caextract.html> and point at that.
+Never work around this by disabling certificate verification — that would send
+your API key over a connection you have not authenticated.
 
 ### VS Code
 
