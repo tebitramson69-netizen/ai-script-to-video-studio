@@ -68,6 +68,21 @@ Set both: `curl.cainfo` covers Guzzle and therefore Laravel's HTTP client, while
 Never work around this by disabling certificate verification — that would send
 your API key over a connection you have not authenticated.
 
+There is a script that does all of the above, including finding a PHP 8.3+
+interpreter when XAMPP's 8.2 is the one on your `PATH`:
+
+```powershell
+.\scripts\windows-php-setup.ps1 -DryRun   # report, change nothing
+.\scripts\windows-php-setup.ps1           # apply
+```
+
+It is safe to re-run, writes to the `php.ini` that `php --ini` actually reports,
+and finishes by opening a real TLS connection to `queue.fal.run` to prove the
+result. That check is an unauthenticated HEAD request — it costs nothing, and the
+script never calls a generation endpoint. Exit codes: `0` verified, `1`
+certificates still wrong, `2` certificates configured but the host unreachable
+from this machine.
+
 ### VS Code
 
 Open `studio.code-workspace` rather than the bare folder — it hides `vendor/`
