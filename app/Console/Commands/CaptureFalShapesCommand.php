@@ -54,6 +54,7 @@ class CaptureFalShapesCommand extends Command
                             {--minimal : Probe with prompt and duration alone, bypassing the adapter\'s payload. Use to bisect a 4xx.}
                             {--poll-interval=5 : Seconds between status checks}
                             {--max-polls=60 : Give up after this many checks}
+                            {--collect= : Finish a run that already submitted. Captures status and result for an existing request id without generating anything, so a half-finished capture costs nothing to complete.}
                             {--dry-run : Print the request and exit without calling anything}
                             {--out= : Directory for the captured JSON}';
 
@@ -108,6 +109,25 @@ class CaptureFalShapesCommand extends Command
 
         $this->outputDir = $this->option('out')
             ?: storage_path('app/private/fal-capture/'.now()->format('Ymd-His'));
+
+        // Collecting an existing request generates nothing, so it skips the
+        // payload build, the estimate and the confirmation entirely. It is
+        // placed before all of them deliberately: a run that died after
+        // submitting has already been billed, and the way to finish it must not
+        // route through the code that spends.
+        $collecting = trim((string) $this->option('collect'));
+
+        if ($collecting !== '') {
+            if ($key === '') {
+                $this->components->error('FAL_KEY is not set. Put it in .env — never on the command line, where it lands in your shell history.');
+
+                return self::FAILURE;
+            }
+
+            $this->components->info("Collecting {$collecting} — nothing is generated and nothing is charged.");
+
+            return $this->collectShapes($model, $key, $collecting, $this->priorSubmitBody());
+        }
 
         try {
             $payload = $this->buildPayload();
@@ -200,6 +220,21 @@ class CaptureFalShapesCommand extends Command
 
         $this->components->twoColumnDetail('Request id', $requestId);
 
+        return $this->collectShapes($model, $key, $requestId, $submit->json() ?? []);
+    }
+
+    /**
+     * Capture status and result for a request that is already running.
+     *
+     * Shared by the fresh run and by --collect, because a submitted request is
+     * a submitted request: fal has accepted the work and will bill it either
+     * way, and the code that reads the shapes back must not differ depending on
+     * which command invocation paid for them.
+     *
+     * @param  array<string, mixed>  $submitBody
+     */
+    protected function collectShapes(string $model, string $key, string $requestId, array $submitBody): int
+    {
         // ---- 2. Status -----------------------------------------------------
         // Resolved through the same authority the adapter uses, not built by
         // hand. The first version of this command constructed
@@ -207,7 +242,7 @@ class CaptureFalShapesCommand extends Command
         // live provider - which looked like a broken adapter when the adapter
         // would have followed fal's own status_url and worked. A probe that can
         // fail where the thing it validates succeeds is worse than no probe.
-        $statusCandidates = $this->statusCandidates($submit->json() ?? [], $model, $requestId);
+        $statusCandidates = $this->statusCandidates($submitBody, $model, $requestId);
 
         $this->components->twoColumnDetail(
             'Status URL',
@@ -262,7 +297,7 @@ class CaptureFalShapesCommand extends Command
         // ---- 3. Result -----------------------------------------------------
         $resolved = null;
         $result = $this->firstThatAnswers(
-            $this->resultCandidates($submit->json() ?? [], $model, $requestId),
+            $this->resultCandidates($submitBody, $model, $requestId),
             $key,
             $resolved,
         );
@@ -279,6 +314,44 @@ class CaptureFalShapesCommand extends Command
         $this->summarise($result->json() ?? []);
 
         return self::SUCCESS;
+    }
+
+    /**
+     * The submit body an earlier run saved, when --out points at its directory.
+     *
+     * Worth reading rather than ignoring: it carries fal's own status_url and
+     * response_url, which are authoritative about its routing. Without it the
+     * URLs are reconstructed, which works but exercises the guess instead of
+     * the fact. Absent or unreadable is not an error — reconstruction is the
+     * documented fallback.
+     *
+     * @return array<string, mixed>
+     */
+    protected function priorSubmitBody(): array
+    {
+        $path = "{$this->outputDir}/01-submit.json";
+
+        if (! is_file($path)) {
+            $this->components->warn(
+                'No 01-submit.json in the output directory, so the request URLs are '.
+                'reconstructed rather than taken from fal. Pass --out=<the earlier '.
+                'capture directory> to use the ones fal gave.'
+            );
+
+            return [];
+        }
+
+        $decoded = json_decode((string) file_get_contents($path), true);
+
+        if (! is_array($decoded)) {
+            $this->components->warn("{$path} is not readable JSON; reconstructing the URLs instead.");
+
+            return [];
+        }
+
+        $this->components->info('Reusing the status and result URLs fal returned in 01-submit.json.');
+
+        return $decoded;
     }
 
     /**

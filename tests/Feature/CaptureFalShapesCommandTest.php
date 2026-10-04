@@ -394,6 +394,106 @@ class CaptureFalShapesCommandTest extends TestCase
         File::deleteDirectory($out);
     }
 
+    public function test_collect_finishes_an_existing_request_without_generating(): void
+    {
+        // The gap this closes: the first live run submitted successfully and
+        // then failed collecting its own result. fal had already billed the
+        // generation, but the only way to finish capturing it was a hand-written
+        // tinker call, and re-running the command would have paid again.
+        config(['studio.fal.key' => 'test-key']);
+
+        $out = storage_path('framework/testing/fal-capture-collect');
+        File::deleteDirectory($out);
+
+        Http::fake([
+            'queue.fal.run/fal-ai/kling-video/requests/existing-1/status' => fn () => Http::response([
+                'status' => 'COMPLETED',
+            ]),
+            'queue.fal.run/fal-ai/kling-video/requests/existing-1' => fn () => Http::response([
+                'video' => ['url' => 'https://cdn.fal.media/clip.mp4'],
+            ]),
+            'queue.fal.run/fal-ai/kling-video/v2.5-turbo/pro/text-to-video*' => fn () => Http::response(
+                ['detail' => 'Method Not Allowed'],
+                405,
+            ),
+        ]);
+
+        $this->artisan('studio:capture-fal-shapes', [
+            '--model' => 'kling-2-5-turbo-pro',
+            '--collect' => 'existing-1',
+            '--out' => $out,
+        ])
+            ->expectsOutputToContain('nothing is generated and nothing is charged')
+            ->assertSuccessful();
+
+        // No POST at all: a collect must never submit.
+        Http::assertNotSent(fn (Request $r) => $r->method() === 'POST');
+
+        $this->assertFileExists($out.'/03-status-complete.json');
+        $this->assertFileExists($out.'/04-result.json');
+
+        File::deleteDirectory($out);
+    }
+
+    public function test_collect_prefers_the_urls_fal_already_gave(): void
+    {
+        // An earlier run's 01-submit.json carries fal's own status_url and
+        // response_url. Using them exercises the fact rather than the
+        // reconstruction, which is the whole reason the adapter keeps them.
+        config(['studio.fal.key' => 'test-key']);
+
+        $out = storage_path('framework/testing/fal-capture-collect-reuse');
+        File::deleteDirectory($out);
+        File::ensureDirectoryExists($out);
+        File::put($out.'/01-submit.json', json_encode([
+            'request_id' => 'existing-2',
+            'status_url' => 'https://queue.fal.run/custom/route/existing-2/status',
+            'response_url' => 'https://queue.fal.run/custom/route/existing-2',
+        ]));
+
+        Http::fake([
+            'queue.fal.run/custom/route/existing-2/status' => fn () => Http::response(['status' => 'COMPLETED']),
+            'queue.fal.run/custom/route/existing-2' => fn () => Http::response([
+                'video' => ['url' => 'https://cdn.fal.media/clip.mp4'],
+            ]),
+        ]);
+
+        $this->artisan('studio:capture-fal-shapes', [
+            '--model' => 'kling-2-5-turbo-pro',
+            '--collect' => 'existing-2',
+            '--out' => $out,
+        ])
+            ->expectsOutputToContain('Reusing the status and result URLs fal returned')
+            ->assertSuccessful();
+
+        Http::assertSent(fn (Request $r) => $r->url() === 'https://queue.fal.run/custom/route/existing-2/status');
+
+        File::deleteDirectory($out);
+    }
+
+    public function test_collect_says_so_when_it_has_to_reconstruct_the_urls(): void
+    {
+        // Silence here would be the bad outcome: reconstruction is the
+        // documented fallback, but it is a guess, and a capture written against
+        // a guess should say which it was.
+        config(['studio.fal.key' => 'test-key']);
+
+        $out = storage_path('framework/testing/fal-capture-collect-noprior');
+        File::deleteDirectory($out);
+
+        Http::fake(['*' => fn () => Http::response(['status' => 'COMPLETED'])]);
+
+        $this->artisan('studio:capture-fal-shapes', [
+            '--model' => 'kling-2-5-turbo-pro',
+            '--collect' => 'existing-3',
+            '--out' => $out,
+        ])
+            ->expectsOutputToContain('reconstructed rather than taken from fal')
+            ->assertSuccessful();
+
+        File::deleteDirectory($out);
+    }
+
     public function test_a_rejection_never_carries_the_api_key(): void
     {
         // The captured files exist to be pasted into a chat.
