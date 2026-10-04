@@ -61,6 +61,8 @@ class CaptureFalShapesCommand extends Command
 
     protected ModelCapabilities $capabilities;
 
+    protected int $rejections = 0;
+
     public function handle(): int
     {
         $key = (string) config('studio.fal.key');
@@ -475,7 +477,23 @@ class CaptureFalShapesCommand extends Command
         }
 
         $this->components->error("{$method} {$url} returned {$response->status()}.");
-        $this->line($this->redact($response->body(), $key));
+        $this->line($this->redact($this->pretty($response->body()), $key));
+
+        // A rejection is the most valuable thing this command can bring back
+        // and the cheapest: fal bills for successful outputs, so a 4xx costs
+        // nothing but names the field and the type it wanted. Printing it to
+        // the terminal is not keeping it — scrollback is lost, and the probe
+        // is a one-shot. Write it next to the request that caused it.
+        $this->save(
+            sprintf('99-rejected-%02d-%s-%d.json', ++$this->rejections, strtolower($method), $response->status()),
+            [
+                'method' => $method,
+                'url' => $url,
+                'status' => $response->status(),
+                'body' => $response->json() ?? $response->body(),
+                'headers' => $response->headers(),
+            ],
+        );
 
         if ($response->status() === 404) {
             $this->line('');
@@ -595,11 +613,34 @@ class CaptureFalShapesCommand extends Command
             (string) config('studio.fal.key'),
         );
 
+        // Owns the directory rather than trusting handle() to have made it:
+        // the rejection files are written from call_(), which can now run on
+        // paths that never reached the pre-submit ensureDirectoryExists().
+        File::ensureDirectoryExists($this->outputDir);
         File::put("{$this->outputDir}/{$filename}", $json);
     }
 
     protected function redact(string $text, string $key): string
     {
         return $key === '' ? $text : str_replace($key, '***REDACTED***', $text);
+    }
+
+    /**
+     * Re-indent a JSON error body so it can be read on screen.
+     *
+     * fal returns validation errors as a nested `detail` array on one line.
+     * That line is the answer to "which field, and what type did it want?" —
+     * worth the few characters it takes to make it legible. Anything that is
+     * not JSON is passed through untouched.
+     */
+    protected function pretty(string $body): string
+    {
+        $decoded = json_decode($body, true);
+
+        if (! is_array($decoded)) {
+            return $body;
+        }
+
+        return json_encode($decoded, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) ?: $body;
     }
 }

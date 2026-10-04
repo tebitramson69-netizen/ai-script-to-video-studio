@@ -5,6 +5,8 @@ namespace Tests\Feature;
 use App\Contracts\Data\ClipRequest;
 use App\Integrations\Fal\FalPayloadBuilder;
 use App\Services\Provider\ModelRegistry;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 /**
@@ -226,5 +228,77 @@ class CaptureFalShapesCommandTest extends TestCase
         ])
             ->expectsOutputToContain('declares no endpoint')
             ->assertFailed();
+    }
+
+    public function test_a_rejection_is_written_to_disk_not_only_to_the_terminal(): void
+    {
+        // The probe is a one-shot against a funded account, and a rejection is
+        // the most useful thing it can return: fal charges nothing for a 4xx,
+        // and the body names the field and the type it expected. Leaving that
+        // body in scrollback means the one piece of evidence the run produced
+        // can be lost by closing a window.
+        config(['studio.fal.key' => 'test-key']);
+
+        $out = storage_path('framework/testing/fal-capture-rejected');
+        File::deleteDirectory($out);
+
+        Http::fake([
+            '*' => fn () => Http::response([
+                'detail' => [[
+                    'loc' => ['body', 'duration'],
+                    'msg' => 'Input should be a valid string',
+                    'type' => 'string_type',
+                ]],
+            ], 422),
+        ]);
+
+        $this->artisan('studio:capture-fal-shapes', [
+            '--model' => 'kling-2-5-turbo-pro',
+            '--out' => $out,
+        ])
+            ->expectsConfirmation('Spend that and capture the shapes?', 'yes')
+            ->assertFailed();
+
+        $rejections = File::glob($out.'/99-rejected-*.json');
+
+        $this->assertCount(1, $rejections, 'The 422 body was not persisted.');
+
+        $saved = json_decode(File::get($rejections[0]), true);
+
+        $this->assertSame(422, $saved['status']);
+        $this->assertSame('duration', $saved['body']['detail'][0]['loc'][1]);
+        $this->assertSame('Input should be a valid string', $saved['body']['detail'][0]['msg']);
+
+        // The request that caused it has to be beside it, or the rejection
+        // names a field without saying what was sent for it.
+        $this->assertFileExists($out.'/00-request-sent.json');
+
+        File::deleteDirectory($out);
+    }
+
+    public function test_a_rejection_never_carries_the_api_key(): void
+    {
+        // The captured files exist to be pasted into a chat.
+        config(['studio.fal.key' => 'secret-key-value']);
+
+        $out = storage_path('framework/testing/fal-capture-redacted');
+        File::deleteDirectory($out);
+
+        Http::fake([
+            '*' => fn () => Http::response(['detail' => 'rejected for secret-key-value'], 401),
+        ]);
+
+        $this->artisan('studio:capture-fal-shapes', [
+            '--model' => 'kling-2-5-turbo-pro',
+            '--out' => $out,
+        ])
+            ->expectsConfirmation('Spend that and capture the shapes?', 'yes')
+            ->assertFailed();
+
+        foreach (File::glob($out.'/*.json') as $file) {
+            $this->assertStringNotContainsString('secret-key-value', File::get($file));
+        }
+
+        File::deleteDirectory($out);
     }
 }
