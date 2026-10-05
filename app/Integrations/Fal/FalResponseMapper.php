@@ -332,6 +332,60 @@ class FalResponseMapper
     }
 
     /**
+     * How many bytes the provider says the file at this URL weighs.
+     *
+     * Tied to the URL actually chosen rather than to the first size in the body.
+     * Kling's result carries video.url beside video.file_size, but a response
+     * with a thumbnail alongside the clip would also carry the thumbnail's size,
+     * and checking that against the clip's bytes would reject a perfectly good
+     * download. So this finds the path holding the URL and looks only at its
+     * siblings.
+     *
+     * Null when the provider is silent, which means no check happens — this must
+     * never fail a download it has no evidence about.
+     *
+     * @param  array<string, mixed>  $body
+     */
+    public function fileSizeBesideUrl(array $body, string $url): ?int
+    {
+        $flat = $this->flatten($body);
+
+        $urlPath = null;
+
+        foreach ($flat as $path => $value) {
+            if ($value === $url) {
+                $urlPath = $path;
+                break;
+            }
+        }
+
+        if ($urlPath === null) {
+            return null;
+        }
+
+        // 'video.url' -> 'video.'; a top-level 'url' -> '' so siblings are the
+        // top level.
+        $parent = str_contains($urlPath, '.')
+            ? substr($urlPath, 0, strrpos($urlPath, '.') + 1)
+            : '';
+
+        foreach (['file_size', 'fileSize', 'size', 'content_length'] as $key) {
+            $value = $flat[$parent.$key] ?? null;
+
+            if (is_int($value) && $value > 0) {
+                return $value;
+            }
+
+            // Some providers quote numbers. A non-numeric string is not a size.
+            if ($this->isNumericString($value) && (int) $value > 0) {
+                return (int) $value;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * @param  array<string, mixed>  $body
      * @param  list<string>  $keys
      */

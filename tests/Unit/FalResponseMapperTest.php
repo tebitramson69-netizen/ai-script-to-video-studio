@@ -145,4 +145,83 @@ class FalResponseMapperTest extends TestCase
         $this->assertSame('boom', $this->mapper->errorMessage(['error' => ['message' => 'boom']]));
         $this->assertNull($this->mapper->errorMessage(['status' => 'COMPLETED']));
     }
+
+    // --------------------------------------------- size beside the chosen url
+
+    public function test_it_reads_the_size_reported_for_the_chosen_file(): void
+    {
+        // The real Kling result, captured 2026-10-04.
+        $body = ['video' => [
+            'url' => 'https://v3b.fal.media/files/b/0aacfce3/aT87WQ8CmNfDB9VaD2qzl_output.mp4',
+            'content_type' => 'video/mp4',
+            'file_name' => 'output.mp4',
+            'file_size' => 12418965,
+        ]];
+
+        $this->assertSame(
+            12418965,
+            $this->mapper->fileSizeBesideUrl($body, $this->mapper->videoUrl($body)),
+        );
+    }
+
+    public function test_it_does_not_take_another_files_size(): void
+    {
+        // The reason this matches siblings rather than the first size in the
+        // body. A result carrying a thumbnail beside the clip would otherwise
+        // have the thumbnail's bytes checked against the video's, and a
+        // perfectly good download would be rejected as truncated.
+        $body = [
+            'video' => ['url' => 'https://cdn.fal.media/clip.mp4', 'file_size' => 12418965],
+            'thumbnail' => ['url' => 'https://cdn.fal.media/thumb.png', 'file_size' => 4096],
+        ];
+
+        $this->assertSame(12418965, $this->mapper->fileSizeBesideUrl($body, 'https://cdn.fal.media/clip.mp4'));
+        $this->assertSame(4096, $this->mapper->fileSizeBesideUrl($body, 'https://cdn.fal.media/thumb.png'));
+    }
+
+    public function test_a_silent_provider_means_no_size_to_check(): void
+    {
+        // Null must mean "no evidence", never "zero bytes": download() skips the
+        // comparison entirely rather than failing something it cannot judge.
+        $this->assertNull($this->mapper->fileSizeBesideUrl(
+            ['video' => ['url' => 'https://cdn.fal.media/clip.mp4']],
+            'https://cdn.fal.media/clip.mp4',
+        ));
+    }
+
+    public function test_a_url_that_is_not_in_the_body_has_no_size(): void
+    {
+        $this->assertNull($this->mapper->fileSizeBesideUrl(
+            ['video' => ['url' => 'https://cdn.fal.media/clip.mp4', 'file_size' => 10]],
+            'https://cdn.fal.media/somewhere-else.mp4',
+        ));
+    }
+
+    public function test_it_reads_a_top_level_size(): void
+    {
+        $this->assertSame(2048, $this->mapper->fileSizeBesideUrl(
+            ['url' => 'https://cdn.fal.media/clip.mp4', 'file_size' => 2048],
+            'https://cdn.fal.media/clip.mp4',
+        ));
+    }
+
+    public function test_it_tolerates_a_quoted_size(): void
+    {
+        $this->assertSame(2048, $this->mapper->fileSizeBesideUrl(
+            ['audio' => ['url' => 'https://cdn.fal.media/vo.mp3', 'size' => '2048']],
+            'https://cdn.fal.media/vo.mp3',
+        ));
+    }
+
+    public function test_a_nonsense_size_is_ignored_rather_than_enforced(): void
+    {
+        // A zero or a non-number is not a size. Enforcing it would fail every
+        // download of a file the provider described badly.
+        foreach ([0, -1, 'unknown', null] as $value) {
+            $this->assertNull($this->mapper->fileSizeBesideUrl(
+                ['video' => ['url' => 'https://cdn.fal.media/clip.mp4', 'file_size' => $value]],
+                'https://cdn.fal.media/clip.mp4',
+            ));
+        }
+    }
 }

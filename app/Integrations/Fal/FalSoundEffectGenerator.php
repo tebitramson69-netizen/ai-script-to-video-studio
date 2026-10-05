@@ -94,7 +94,11 @@ class FalSoundEffectGenerator implements SoundEffectGenerator
         }
 
         $path = tempnam(sys_get_temp_dir(), 'studio_sfx_').$this->extensionFor($url);
-        $this->client->download($url, $path);
+        // The size the provider reported for THIS url, when it reported one.
+        // download() treats a mismatch as a truncated transfer rather than an
+        // asset, which is the difference between a failed stage and a clip that
+        // is quietly broken.
+        $this->client->download($url, $path, $mapper->fileSizeBesideUrl($body, $url));
 
         return new GeneratedMedia(
             path: $path,

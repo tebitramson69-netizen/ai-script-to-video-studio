@@ -869,6 +869,18 @@ return [
         // cheaper than resubmitting.
         'timeout_seconds' => (int) env('FAL_TIMEOUT', 120),
         'connect_timeout_seconds' => (int) env('FAL_CONNECT_TIMEOUT', 15),
+
+        // Ceiling on a single generated file. A 10-second 1080p clip is tens of
+        // megabytes, so 512MB is far above anything legitimate — it exists so a
+        // runaway or redirected response cannot fill the disk and take the whole
+        // pipeline down with it.
+        'max_download_bytes' => (int) env('FAL_MAX_DOWNLOAD_BYTES', 536870912),
+
+        // Resolve asset hostnames and refuse private or reserved addresses
+        // before downloading (SSRF). Turn this off ONLY if assets are served
+        // through a proxy on your own network, where a private address is the
+        // correct answer. Leave it on everywhere else.
+        'verify_host_ip' => (bool) env('FAL_VERIFY_HOST_IP', true),
     ],
 
     'ffmpeg' => [

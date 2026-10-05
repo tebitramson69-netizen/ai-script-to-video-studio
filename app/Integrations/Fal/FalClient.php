@@ -4,11 +4,16 @@ namespace App\Integrations\Fal;
 
 use App\Contracts\ProviderException;
 use App\Enums\ProviderFailureReason;
+use App\Services\Provider\DownloadUrlGuard;
+use GuzzleHttp\Psr7\Uri;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
+use Psr\Http\Message\RequestInterface;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\UriInterface;
 
 /**
  * HTTP transport for fal's queue API.
@@ -62,6 +67,16 @@ class FalClient
         protected int $timeoutSeconds = 120,
         protected int $connectTimeoutSeconds = 15,
     ) {}
+
+    protected function guard(): DownloadUrlGuard
+    {
+        return app(DownloadUrlGuard::class);
+    }
+
+    protected function maxDownloadBytes(): int
+    {
+        return (int) config('studio.fal.max_download_bytes', 536870912);
+    }
 
     public static function fromConfig(): self
     {
@@ -160,35 +175,164 @@ class FalClient
      * megabytes, and the queue worker handling it has no reason to carry that
      * as a PHP string.
      */
-    public function download(string $url, string $destination): void
+    /**
+     * Stream a generated file to local disk.
+     *
+     * The URL comes out of a provider response body and points at a host we
+     * never authenticated to, so it is checked before it is fetched — see
+     * DownloadUrlGuard. Redirects are checked too: a URL that passes and then
+     * redirects to 169.254.169.254 would otherwise reach instance metadata.
+     *
+     * @param  int|null  $expectedBytes  What the provider said the file weighs, when it
+     *                                   said. A mismatch means a truncated transfer, which
+     *                                   otherwise lands as a silently corrupt asset.
+     */
+    public function download(string $url, string $destination, ?int $expectedBytes = null): void
     {
+        $this->guard()->assertSafe($url);
+
+        $limit = $this->maxDownloadBytes();
+
         try {
-            $response = Http::withOptions(['sink' => $destination])
+            $response = Http::withOptions([
+                'sink' => $destination,
+
+                // protocols rules out an https -> http downgrade on its own;
+                // on_redirect applies the full guard to every hop, so a public
+                // first URL cannot be used as a doorway to a private one.
+                'allow_redirects' => [
+                    'max' => 3,
+                    'strict' => true,
+                    'referer' => false,
+                    'protocols' => ['https'],
+                    'on_redirect' => function (
+                        RequestInterface $request,
+                        ResponseInterface $response,
+                        UriInterface $uri,
+                    ): void {
+                        $this->guard()->assertSafe((string) Uri::composeComponents(
+                            $uri->getScheme(),
+                            $uri->getAuthority(),
+                            $uri->getPath(),
+                            $uri->getQuery(),
+                            null,
+                        ));
+                    },
+                ],
+
+                // Refuses an oversized body before any of it is written. Disk
+                // here is a fixed allowance, and a download that fills it takes
+                // the whole pipeline down, not just this asset.
+                'on_headers' => function (ResponseInterface $response) use ($limit, $url): void {
+                    $declared = (int) ($response->getHeaderLine('Content-Length') ?: 0);
+
+                    if ($declared > $limit) {
+                        throw ProviderException::because(
+                            ProviderFailureReason::ProviderError,
+                            sprintf(
+                                'Refusing to download %s: it declares %d bytes, over the %d byte limit.',
+                                $url,
+                                $declared,
+                                $limit,
+                            ),
+                            'fal',
+                        );
+                    }
+                },
+            ])
                 ->timeout($this->timeoutSeconds)
                 ->connectTimeout($this->connectTimeoutSeconds)
-                ->retry(2, 500, throw: false)
+
+                // The same policy as request(): this used to resend every
+                // non-2xx, so one 401 cost three downloads.
+                ->retry(2, 500, $this->retryWhen(), throw: false)
                 ->get($url);
         } catch (ConnectionException $e) {
+            $this->discardPartial($destination);
+
             throw ProviderException::because(
                 ProviderFailureReason::NetworkError,
                 "Could not download the generated file: {$e->getMessage()}",
                 'fal',
                 $e,
             );
+        } catch (ProviderException $e) {
+            // Thrown from on_headers or on_redirect, through Guzzle.
+            $this->discardPartial($destination);
+
+            throw $e;
         }
 
         if (! $response->successful()) {
+            $this->discardPartial($destination);
+
             throw $this->exceptionFor($response, $url);
         }
 
+        $this->assertFileIsUsable($destination, $url, $expectedBytes, $limit);
+    }
+
+    /**
+     * @throws ProviderException
+     */
+    protected function assertFileIsUsable(string $destination, string $url, ?int $expectedBytes, int $limit): void
+    {
         // A download that "succeeded" but wrote nothing is a failure the
         // pipeline must not carry forward as an asset.
         if (! is_file($destination) || filesize($destination) === 0) {
+            $this->discardPartial($destination);
+
             throw ProviderException::because(
                 ProviderFailureReason::ProviderError,
                 'The generated file downloaded as empty.',
                 'fal',
             );
+        }
+
+        $written = (int) filesize($destination);
+
+        if ($written > $limit) {
+            // Reached when the response declared no Content-Length, so
+            // on_headers had nothing to judge.
+            $this->discardPartial($destination);
+
+            throw ProviderException::because(
+                ProviderFailureReason::ProviderError,
+                sprintf('%s wrote %d bytes, over the %d byte limit.', $url, $written, $limit),
+                'fal',
+            );
+        }
+
+        if ($expectedBytes !== null && $written !== $expectedBytes) {
+            // Retryable: a truncated transfer is the common cause and a second
+            // attempt usually completes. Keeping the short file would be worse
+            // than failing - ffmpeg accepts some truncated mp4s and produces a
+            // clip that is quietly wrong.
+            $this->discardPartial($destination);
+
+            throw ProviderException::because(
+                ProviderFailureReason::NetworkError,
+                sprintf(
+                    'Downloaded %d bytes from %s but the provider said %d. Treating it as truncated.',
+                    $written,
+                    $url,
+                    $expectedBytes,
+                ),
+                'fal',
+            );
+        }
+    }
+
+    /**
+     * Remove a half-written file.
+     *
+     * Left in place, it is indistinguishable from a complete asset to the next
+     * attempt, and the pipeline would carry it forward.
+     */
+    protected function discardPartial(string $destination): void
+    {
+        if (is_file($destination)) {
+            @unlink($destination);
         }
     }
 
