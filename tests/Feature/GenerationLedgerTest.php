@@ -83,16 +83,85 @@ class GenerationLedgerTest extends TestCase
         $this->assertSame(1, ProviderRequest::count());
     }
 
-    public function test_a_duplicate_claim_is_reported_as_in_flight(): void
+    public function test_a_duplicate_of_a_submitted_request_is_in_flight(): void
     {
+        // The real deduplication case: the provider has the work and gave us an
+        // id, so a second asker waits instead of paying again.
         $project = Project::factory()->create();
         $fingerprint = $this->ledger->fingerprint('video.clip', 'fal', 'veo-3.1', ['seed' => 1]);
 
-        $this->ledger->claim($project, 'video.clip', 'fal', 'veo-3.1', $fingerprint, 1.60);
+        $first = $this->ledger->claim($project, 'video.clip', 'fal', 'veo-3.1', $fingerprint, 1.60);
+        $this->ledger->markSubmitted($first->request, 'req-live-1');
+
         $second = $this->ledger->claim($project, 'video.clip', 'fal', 'veo-3.1', $fingerprint, 1.60);
 
         $this->assertTrue($second->isDuplicateInFlight());
         $this->assertFalse($second->isAlreadyCompleted());
+    }
+
+    public function test_a_claim_with_no_provider_id_is_not_in_flight(): void
+    {
+        // This assertion used to read the other way, and that was the bug. A
+        // claim nobody managed to submit has no provider id, and the reconciler
+        // filters on whereNotNull('provider_request_id') - so calling it
+        // "in flight" means waiting forever for a request the provider was
+        // never told about. Observed live on 2026-10-05: a submit POST timed out
+        // at 120s, the retry read the row as in-flight, declined to resubmit,
+        // and the shot sat rendering with no error.
+        $project = Project::factory()->create();
+        $fingerprint = $this->ledger->fingerprint('video.clip', 'fal', 'veo-3.1', ['seed' => 2]);
+
+        $this->ledger->claim($project, 'video.clip', 'fal', 'veo-3.1', $fingerprint, 1.60);
+        $second = $this->ledger->claim($project, 'video.clip', 'fal', 'veo-3.1', $fingerprint, 1.60);
+
+        $this->assertFalse($second->isDuplicateInFlight());
+
+        // Young enough that another worker may still be inside submitClip().
+        // Waiting is correct here; submitting alongside it would pay twice.
+        $this->assertTrue($second->isSubmissionInProgress(180));
+        $this->assertFalse($second->isAbandonedClaim(180));
+    }
+
+    public function test_an_unsubmitted_claim_older_than_the_grace_period_is_abandoned(): void
+    {
+        // Past the submit timeout no POST started earlier can still be running,
+        // so the row is genuinely orphaned and must be released rather than left
+        // blocking the shot for good.
+        $project = Project::factory()->create();
+        $fingerprint = $this->ledger->fingerprint('video.clip', 'fal', 'veo-3.1', ['seed' => 3]);
+
+        $this->ledger->claim($project, 'video.clip', 'fal', 'veo-3.1', $fingerprint, 1.60);
+
+        $this->travel(200)->seconds();
+
+        $second = $this->ledger->claim($project, 'video.clip', 'fal', 'veo-3.1', $fingerprint, 1.60);
+
+        $this->assertTrue($second->isAbandonedClaim(180));
+        $this->assertFalse($second->isSubmissionInProgress(180));
+        $this->assertFalse($second->isDuplicateInFlight());
+
+        $this->travelBack();
+    }
+
+    public function test_age_alone_does_not_abandon_a_submitted_request(): void
+    {
+        // A slow generation is not an abandoned one. Kling took 151 seconds of
+        // inference for a 5-second clip, so "old" must never imply "orphaned"
+        // once the provider has acknowledged the work.
+        $project = Project::factory()->create();
+        $fingerprint = $this->ledger->fingerprint('video.clip', 'fal', 'veo-3.1', ['seed' => 4]);
+
+        $first = $this->ledger->claim($project, 'video.clip', 'fal', 'veo-3.1', $fingerprint, 1.60);
+        $this->ledger->markSubmitted($first->request, 'req-live-2');
+
+        $this->travel(3600)->seconds();
+
+        $second = $this->ledger->claim($project, 'video.clip', 'fal', 'veo-3.1', $fingerprint, 1.60);
+
+        $this->assertFalse($second->isAbandonedClaim(180));
+        $this->assertTrue($second->isDuplicateInFlight());
+
+        $this->travelBack();
     }
 
     public function test_a_duplicate_of_completed_work_offers_the_existing_asset(): void

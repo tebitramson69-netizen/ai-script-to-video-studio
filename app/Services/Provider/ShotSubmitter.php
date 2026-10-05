@@ -4,6 +4,7 @@ namespace App\Services\Provider;
 
 use App\Contracts\Data\ClipRequest;
 use App\Contracts\QueueableVideoGenerator;
+use App\Enums\ProviderFailureReason;
 use App\Enums\ShotStatus;
 use App\Models\ProviderRequest;
 use App\Models\Shot;
@@ -22,6 +23,20 @@ class ShotSubmitter
     public function __construct(
         protected GenerationLedger $ledger,
     ) {}
+
+    /**
+     * How long a claim may sit unsubmitted before it is treated as abandoned.
+     *
+     * Derived from the provider's own submit timeout rather than picked: once
+     * that has elapsed, no submit started earlier can still be running, so
+     * nothing is lost by releasing the claim. A shorter window would risk
+     * declaring a live submit dead and paying for the same clip twice; a longer
+     * one just leaves the shot stuck for longer than necessary.
+     */
+    protected function submitGraceSeconds(): int
+    {
+        return (int) config('studio.fal.timeout_seconds', 120) + 60;
+    }
 
     /**
      * @return SubmissionOutcome what happened, so the caller can tell the owner
@@ -71,6 +86,42 @@ class ShotSubmitter
                 $shot->forceFill(['status' => ShotStatus::Rendering])->save();
 
                 return SubmissionOutcome::duplicateInFlight($claim->request);
+            }
+
+            if ($claim->isSubmissionInProgress($this->submitGraceSeconds())) {
+                // Claimed but not yet submitted, and recently enough that
+                // another worker may be inside submitClip() right now. Waiting
+                // is the only safe answer: submitting alongside it is how one
+                // shot becomes two charges.
+                $shot->forceFill(['status' => ShotStatus::Rendering])->save();
+
+                return SubmissionOutcome::duplicateInFlight($claim->request);
+            }
+
+            if ($claim->isAbandonedClaim($this->submitGraceSeconds())) {
+                // Nobody ever told the provider about this work, and no submit
+                // can still be running. The row would otherwise sit Pending with
+                // no id forever: the reconciler filters on a non-null id, so it
+                // can never sweep it, and the shot never leaves "rendering".
+                //
+                // Failed rather than resubmitted, on purpose. The original POST
+                // may have reached the provider before the client gave up, so an
+                // automatic retry risks paying twice for one clip. Releasing the
+                // shot lets the owner retry once they have checked.
+                $this->ledger->markFailed(
+                    $claim->request,
+                    ProviderFailureReason::Timeout,
+                    'Claimed but never submitted — the request to the provider did not complete. '.
+                    'Released for retry. The provider may still have accepted and charged for it.',
+                );
+
+                $shot->forceFill([
+                    'status' => ShotStatus::Failed,
+                    'error' => 'The provider was never reached. Check your provider dashboard before retrying — '.
+                        'that attempt may still have been charged.',
+                ])->save();
+
+                return SubmissionOutcome::claimAbandoned($claim->request);
             }
 
             // The previous attempt at identical inputs failed terminally.

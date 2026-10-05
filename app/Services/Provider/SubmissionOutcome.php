@@ -40,6 +40,21 @@ readonly class SubmissionOutcome
     }
 
     /**
+     * A previous attempt claimed this work and never managed to submit it —
+     * typically a POST that timed out. The claim has been failed so the shot can
+     * be retried deliberately.
+     *
+     * Deliberately NOT resubmitted automatically: the provider may have accepted
+     * the original request before the client gave up, and a silent retry would
+     * pay for the same clip twice. A retry the owner chooses is the cheaper
+     * mistake than a charge they did not.
+     */
+    public static function claimAbandoned(ProviderRequest $r): self
+    {
+        return new self($r, 'claim_abandoned');
+    }
+
+    /**
      * Different work that hashed to the same fingerprint, and reseeding did not
      * separate them. Vanishingly unlikely, but it must not be silent.
      */
@@ -67,6 +82,8 @@ readonly class SubmissionOutcome
             'already_completed' => 'An identical generation already succeeded; reusing its result.',
             'previously_failed' => 'This exact request failed before. Change the prompt or reseed before retrying.',
             'collided' => 'This shot collided with another generation and could not be separated. Edit its prompt and regenerate.',
+            'claim_abandoned' => 'A previous attempt never reached the provider, so this shot was released. '.
+                'Check your provider dashboard before retrying: that attempt may still have been charged.',
         };
     }
 }

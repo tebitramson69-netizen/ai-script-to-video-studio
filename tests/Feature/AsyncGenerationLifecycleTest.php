@@ -14,6 +14,7 @@ use App\Models\Shot;
 use App\Services\Media\FfmpegRunner;
 use App\Services\Pipeline\PipelineRunner;
 use App\Services\Pipeline\ProgressSnapshot;
+use App\Services\Provider\ClaimResult;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
@@ -230,5 +231,70 @@ class AsyncGenerationLifecycleTest extends TestCase
         ReconcileProviderRequestsJob::dispatchSync();
 
         $this->assertNotNull(Cache::get(ProgressSnapshot::RECONCILER_HEARTBEAT_KEY));
+    }
+
+    public function test_a_submit_that_never_reached_the_provider_releases_the_shot(): void
+    {
+        // Reproduces 2026-10-05 exactly. The submit POST timed out at 120s, so
+        // the claim was written but no provider id was ever recorded. The retry
+        // read that row as "in flight", declined to resubmit, and the shot sat
+        // in Rendering for good - the reconciler filters on a non-null provider
+        // id, so nothing could ever sweep it.
+        $project = $this->projectWithShot();
+        $shot = $project->shots()->first();
+
+        // The wreckage a timed-out submit leaves: claimed, Pending, no id.
+        $claimed = ProviderRequest::create([
+            'project_id' => $project->getKey(),
+            'capability' => 'video.clip',
+            'provider' => 'fal',
+            'provider_model' => 'fake',
+            'fingerprint' => 'abandoned-claim-1',
+            'status' => ProviderRequestStatus::Pending,
+            'estimated_cost_usd' => 0.50,
+            'subject_type' => $shot->getMorphClass(),
+            'subject_id' => $shot->getKey(),
+        ]);
+
+        // Past the submit timeout, so no POST started earlier can still be live.
+        $claimed->forceFill(['created_at' => now()->subMinutes(10)])->save();
+
+        $claim = new ClaimResult($claimed->fresh(), isNew: false);
+
+        $this->assertFalse(
+            $claim->isDuplicateInFlight(),
+            'A claim with no provider id must never be treated as in flight.',
+        );
+        $this->assertTrue($claim->isAbandonedClaim(180));
+    }
+
+    public function test_a_slow_generation_is_never_mistaken_for_an_abandoned_one(): void
+    {
+        // The counterweight, and the reason the grace period is tied to the
+        // submit timeout rather than to generation time: Kling spent 151 seconds
+        // of inference on a 5-second clip. Age must not release work the
+        // provider has acknowledged.
+        $project = $this->projectWithShot();
+        $shot = $project->shots()->first();
+
+        $submitted = ProviderRequest::create([
+            'project_id' => $project->getKey(),
+            'capability' => 'video.clip',
+            'provider' => 'fal',
+            'provider_model' => 'fake',
+            'fingerprint' => 'slow-but-live-1',
+            'status' => ProviderRequestStatus::InProgress,
+            'provider_request_id' => 'req-live-slow',
+            'estimated_cost_usd' => 0.50,
+            'subject_type' => $shot->getMorphClass(),
+            'subject_id' => $shot->getKey(),
+        ]);
+
+        $submitted->forceFill(['created_at' => now()->subHour()])->save();
+
+        $claim = new ClaimResult($submitted->fresh(), isNew: false);
+
+        $this->assertFalse($claim->isAbandonedClaim(180));
+        $this->assertTrue($claim->isDuplicateInFlight());
     }
 }
