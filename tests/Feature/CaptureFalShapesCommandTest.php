@@ -435,6 +435,82 @@ class CaptureFalShapesCommandTest extends TestCase
         File::deleteDirectory($out);
     }
 
+    public function test_a_finished_request_writes_no_in_progress_sample(): void
+    {
+        // Found by running --collect against the real finished request: it
+        // printed "poll 1: COMPLETED" and still wrote
+        // 02-status-in-progress.json, because the save came before the terminal
+        // check. These files become fixtures, so that one would have pinned a
+        // COMPLETED body as the shape of a running request - and
+        // FalVideoGenerator::checkStatus() exists to tell those apart.
+        config(['studio.fal.key' => 'test-key']);
+
+        $out = storage_path('framework/testing/fal-capture-no-inflight');
+        File::deleteDirectory($out);
+
+        // The 405 pattern must come first. A catch-all would answer the
+        // five-segment candidate with a video body, which describeState() reads
+        // as "unknown (video)" - never terminal, so the probe polls to
+        // --max-polls and fails. That is what a wrong fake looks like here.
+        Http::fake([
+            'queue.fal.run/fal-ai/kling-video/v2.5-turbo/*' => fn () => Http::response(
+                ['detail' => 'Method Not Allowed'],
+                405,
+            ),
+            'queue.fal.run/fal-ai/kling-video/requests/finished-1/status' => fn () => Http::response([
+                'status' => 'COMPLETED',
+            ]),
+            'queue.fal.run/fal-ai/kling-video/requests/finished-1' => fn () => Http::response([
+                'video' => ['url' => 'https://cdn.fal.media/clip.mp4'],
+            ]),
+        ]);
+
+        $this->artisan('studio:capture-fal-shapes', [
+            '--model' => 'kling-2-5-turbo-pro',
+            '--collect' => 'finished-1',
+            '--out' => $out,
+            '--max-polls' => 2,
+            '--poll-interval' => 1,
+        ])->assertSuccessful();
+
+        $this->assertFileDoesNotExist($out.'/02-status-in-progress.json');
+        $this->assertFileExists($out.'/03-status-complete.json');
+
+        File::deleteDirectory($out);
+    }
+
+    public function test_a_genuine_in_progress_response_is_still_captured(): void
+    {
+        // The counterweight: when there really is a mid-flight response, it
+        // must be kept. That body is the only evidence of the vocabulary
+        // checkStatus() has to recognise, and it is gone once the job finishes.
+        config(['studio.fal.key' => 'test-key']);
+
+        $out = storage_path('framework/testing/fal-capture-inflight');
+        File::deleteDirectory($out);
+
+        $statusUrl = 'https://queue.fal.run/fal-ai/kling-video/requests/running-1/status';
+
+        Http::fakeSequence()
+            ->push(['status' => 'IN_PROGRESS'], 200)
+            ->push(['status' => 'COMPLETED'], 200)
+            ->push(['video' => ['url' => 'https://cdn.fal.media/clip.mp4']], 200);
+
+        $this->artisan('studio:capture-fal-shapes', [
+            '--model' => 'kling-2-5-turbo-pro',
+            '--collect' => 'running-1',
+            '--out' => $out,
+            '--poll-interval' => 1,
+            '--max-polls' => 4,
+        ])->assertSuccessful();
+
+        $inflight = json_decode(File::get($out.'/02-status-in-progress.json'), true);
+
+        $this->assertSame('IN_PROGRESS', $inflight['status']);
+
+        File::deleteDirectory($out);
+    }
+
     public function test_collect_prefers_the_urls_fal_already_gave(): void
     {
         // An earlier run's 01-submit.json carries fal's own status_url and

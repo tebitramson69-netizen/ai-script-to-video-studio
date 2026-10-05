@@ -269,30 +269,53 @@ class CaptureFalShapesCommand extends Command
 
             $this->line("  poll {$poll}: {$state}");
 
-            // Keep the first mid-flight response: the in-progress strings are
-            // exactly what checkStatus() has to recognise, and they vanish once
-            // the job finishes.
-            if (! $capturedInProgress) {
-                $this->save('02-status-in-progress.json', $body);
-                $capturedInProgress = true;
-            }
-
             if ($this->looksTerminal($state)) {
                 $terminal = $body;
                 break;
+            }
+
+            // Keep the first mid-flight response: the in-progress strings are
+            // exactly what checkStatus() has to recognise, and they vanish once
+            // the job finishes.
+            //
+            // Saved only AFTER the terminal check. Writing it first meant a
+            // --collect of an already-finished request put a COMPLETED body in
+            // a file named in-progress - harmless as output, but these files
+            // become test fixtures, and that one would have taught the suite
+            // that a running request looks finished.
+            if (! $capturedInProgress) {
+                $this->save('02-status-in-progress.json', $body);
+                $capturedInProgress = true;
             }
 
             sleep(max(1, (int) $this->option('poll-interval')));
         }
 
         if ($terminal === null) {
-            $this->components->error('Never reached a terminal status. 02-status-in-progress.json still has a sample.');
+            $this->components->error(
+                'Never reached a terminal status.'.
+                ($capturedInProgress
+                    ? ' 02-status-in-progress.json still has a sample.'
+                    : ' No status response was captured.')
+            );
 
             return self::FAILURE;
         }
 
         $this->save('03-status-complete.json', $terminal);
-        $this->components->info('Status captured → 02-status-in-progress.json, 03-status-complete.json');
+
+        // Names only what was written. A request that was already finished has
+        // no mid-flight sample to offer, and claiming a file that is not there
+        // sends you looking for it.
+        $this->components->info($capturedInProgress
+            ? 'Status captured → 02-status-in-progress.json, 03-status-complete.json'
+            : 'Status captured → 03-status-complete.json');
+
+        if (! $capturedInProgress) {
+            // Kept off the info() line: that component wraps at terminal width,
+            // which splits the sentence and makes it unmatchable.
+            $this->line('  Already finished, so no mid-flight sample was available.');
+        }
 
         // ---- 3. Result -----------------------------------------------------
         $resolved = null;
