@@ -57,6 +57,7 @@
         text: document.getElementById('progress-text'),
         bar: document.getElementById('progress-bar-fill'),
         spend: document.getElementById('progress-spend'),
+        reconciler: document.getElementById('reconciler-warning'),
     };
 
     var state = {
@@ -301,6 +302,12 @@
         if (el.strip) {
             el.strip.classList.toggle('progress-busy', !!data.busy);
             el.strip.classList.remove('progress-paused');
+        }
+
+        // Shown and hidden rather than written: the text is server-rendered, so
+        // nothing from the response reaches the DOM as markup.
+        if (el.reconciler) {
+            el.reconciler.hidden = !data.reconciler_stalled;
         }
     }
 

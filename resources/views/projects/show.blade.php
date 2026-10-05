@@ -90,6 +90,27 @@
         </noscript>
     </div>
 
+    {{-- Work is outstanding at the provider and nothing is collecting it.
+         Named explicitly rather than left to a progress bar that never moves:
+         the generation has already been submitted and billed, so silence here
+         costs money. --}}
+    <div id="reconciler-warning" class="flash flash-budget" role="alert"
+         @unless($progress->reconcilerStalled) hidden @endunless>
+        <strong>Generations are not being collected.</strong>
+        <p>
+            Work has been submitted to the provider and paid for, but no
+            reconciliation sweep has run in the last
+            {{ (int) (App\Services\Pipeline\ProgressSnapshot::RECONCILER_STALE_AFTER_SECONDS / 60) }}
+            minutes. Start the scheduler in its own terminal:
+        </p>
+        <pre><code>php artisan schedule:work</code></pre>
+        <p class="muted small">
+            <code>queue:work</code> runs the jobs; the scheduler is what sweeps
+            finished provider requests. Both are needed once a queueing provider
+            is configured.
+        </p>
+    </div>
+
     {{-- ── Cost (FR-11, NFR-4) ─────────────────────────────────────────── --}}
     <section class="card">
         <h2>Cost</h2>

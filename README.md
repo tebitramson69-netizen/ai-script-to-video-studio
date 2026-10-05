@@ -99,19 +99,35 @@ If that prints 8.2.x rather than 8.3+, stop: nothing will run, because
 script above prints the interpreter path but cannot set the variable for you —
 it runs in its own scope.
 
-Generating anything needs **two** processes, because every pipeline stage is a
-queued job (PRD A4):
+Generating anything needs **three** processes, because every pipeline stage is a
+queued job (PRD A4) and a queueing provider is collected by a scheduled sweep:
 
-| Window | Command |
-| --- | --- |
-| 1 | `& $php artisan serve` → <http://127.0.0.1:8000> |
-| 2 | `& $php artisan queue:work` |
-| 3 | everything else |
+| Window | Command | Needed for |
+| --- | --- | --- |
+| 1 | `& $php artisan serve` → <http://127.0.0.1:8000> | the UI |
+| 2 | `& $php artisan queue:work` | running the jobs |
+| 3 | `& $php artisan schedule:work` | **collecting provider results** |
+| 4 | everything else | |
 
 Without window 2 the UI sits at *queued* indefinitely and reports no error,
-because nothing is wrong — there is simply no worker. `& $php artisan dev` runs
-the server, the queue, logs and vite in one window instead; it needs Node for the
-vite process.
+because nothing is wrong — there is simply no worker.
+
+**Window 3 only matters once a queueing provider is configured, and then it
+matters a great deal.** `fal` submits a generation and returns a request id; the
+clip is collected by `ReconcileProviderRequestsJob`, which is reachable *only*
+through Laravel's scheduler (`routes/console.php`). Run `queue:work` without
+`schedule:work` and the work is submitted, **billed**, and never fetched — the
+project shows requests in flight forever. The local `fake` driver answers
+synchronously, so this never bites until the first real provider run, which is
+exactly when it costs money.
+
+The project page says so itself rather than leaving you to guess: when requests
+are outstanding and no sweep has run in five minutes, it shows *"Generations are
+not being collected"* and names the command.
+
+`& $php artisan dev` runs the server, queue, logs and vite in one window — but
+**not** the scheduler, so window 3 is still needed. It also starts vite, which
+needs Node.
 
 ### VS Code
 

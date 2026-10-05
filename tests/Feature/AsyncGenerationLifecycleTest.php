@@ -13,7 +13,9 @@ use App\Models\Scene;
 use App\Models\Shot;
 use App\Services\Media\FfmpegRunner;
 use App\Services\Pipeline\PipelineRunner;
+use App\Services\Pipeline\ProgressSnapshot;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -198,5 +200,35 @@ class AsyncGenerationLifecycleTest extends TestCase
         ReconcileProviderRequestsJob::dispatchSync();
 
         $this->assertSame(ShotStatus::Rendered, $project->shots()->first()->status);
+    }
+
+    public function test_a_sweep_records_that_it_ran(): void
+    {
+        // The heartbeat behind the "generations are not being collected"
+        // warning. If the sweep stopped writing it, the warning would fire
+        // while reconciliation was working perfectly - and a warning that cries
+        // wolf is one the owner learns to ignore, which costs the money it was
+        // added to save.
+        Cache::forget(ProgressSnapshot::RECONCILER_HEARTBEAT_KEY);
+
+        ReconcileProviderRequestsJob::dispatchSync();
+
+        $this->assertNotNull(
+            Cache::get(ProgressSnapshot::RECONCILER_HEARTBEAT_KEY),
+            'The sweep ran but left no heartbeat.',
+        );
+    }
+
+    public function test_the_heartbeat_is_recorded_even_with_a_synchronous_driver(): void
+    {
+        // The sweep returns early when the bound driver answers synchronously.
+        // The heartbeat must still be written: the question it answers is
+        // whether the scheduler is running, not whether this sweep had work.
+        config(['studio.drivers.video_generator.default' => 'fake']);
+        Cache::forget(ProgressSnapshot::RECONCILER_HEARTBEAT_KEY);
+
+        ReconcileProviderRequestsJob::dispatchSync();
+
+        $this->assertNotNull(Cache::get(ProgressSnapshot::RECONCILER_HEARTBEAT_KEY));
     }
 }

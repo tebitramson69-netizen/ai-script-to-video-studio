@@ -14,6 +14,7 @@ use App\Models\Shot;
 use App\Models\User;
 use App\Services\Pipeline\ProgressSnapshot;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Tests\TestCase;
 
 /**
@@ -111,6 +112,89 @@ class ProgressPollingTest extends TestCase
 
         $this->assertTrue($snapshot->busy);
         $this->assertSame(1, $snapshot->providerRequestsInFlight);
+    }
+
+    // ------------------------------------------- stalled reconciliation sweep
+
+    protected function outstandingRequest(Project $project, string $fingerprint): void
+    {
+        ProviderRequest::create([
+            'project_id' => $project->getKey(),
+            'capability' => 'video.clip',
+            'provider' => 'fal',
+            'fingerprint' => $fingerprint,
+            'status' => ProviderRequestStatus::InProgress,
+        ]);
+    }
+
+    public function test_outstanding_work_with_no_recent_sweep_is_reported_as_stalled(): void
+    {
+        // The failure this exists to name: `queue:work` is running but
+        // `schedule:work` is not, so submissions are billed and never collected.
+        // Nothing else in the UI distinguishes that from a slow provider — the
+        // progress bar simply never moves, and the money is already gone.
+        Cache::forget(ProgressSnapshot::RECONCILER_HEARTBEAT_KEY);
+
+        $project = $this->project();
+        $this->outstandingRequest($project, 'stalled-1');
+
+        $snapshot = ProgressSnapshot::for($project->fresh());
+
+        $this->assertTrue($snapshot->reconcilerStalled);
+        $this->assertTrue($snapshot->toArray()['reconciler_stalled']);
+    }
+
+    public function test_a_recent_sweep_clears_the_warning(): void
+    {
+        Cache::put(ProgressSnapshot::RECONCILER_HEARTBEAT_KEY, now()->timestamp, now()->addDay());
+
+        $project = $this->project();
+        $this->outstandingRequest($project, 'stalled-2');
+
+        $this->assertFalse(ProgressSnapshot::for($project->fresh())->reconcilerStalled);
+    }
+
+    public function test_a_sweep_that_ran_long_ago_does_not_clear_the_warning(): void
+    {
+        Cache::put(
+            ProgressSnapshot::RECONCILER_HEARTBEAT_KEY,
+            now()->timestamp - (ProgressSnapshot::RECONCILER_STALE_AFTER_SECONDS + 60),
+            now()->addDay(),
+        );
+
+        $project = $this->project();
+        $this->outstandingRequest($project, 'stalled-3');
+
+        $this->assertTrue(ProgressSnapshot::for($project->fresh())->reconcilerStalled);
+    }
+
+    public function test_an_idle_project_is_never_reported_as_stalled(): void
+    {
+        // No heartbeat at all, but nothing is outstanding either. Warning here
+        // would fire on every project in a fresh install and teach the owner to
+        // ignore the one case that matters.
+        Cache::forget(ProgressSnapshot::RECONCILER_HEARTBEAT_KEY);
+
+        $project = $this->project();
+        $this->shot($project, ShotStatus::Rendered, 1);
+
+        $this->assertFalse(ProgressSnapshot::for($project->fresh())->reconcilerStalled);
+    }
+
+    public function test_the_fingerprint_moves_when_the_warning_appears(): void
+    {
+        // Without this the warning would need a manual refresh, which is the
+        // refresh the strip exists to remove.
+        $project = $this->project();
+        $this->outstandingRequest($project, 'stalled-4');
+
+        Cache::put(ProgressSnapshot::RECONCILER_HEARTBEAT_KEY, now()->timestamp, now()->addDay());
+        $healthy = ProgressSnapshot::for($project->fresh())->fingerprint();
+
+        Cache::forget(ProgressSnapshot::RECONCILER_HEARTBEAT_KEY);
+        $stalled = ProgressSnapshot::for($project->fresh())->fingerprint();
+
+        $this->assertNotSame($healthy, $stalled);
     }
 
     public function test_a_stale_shot_is_reported_but_does_not_count_as_work_in_progress(): void
