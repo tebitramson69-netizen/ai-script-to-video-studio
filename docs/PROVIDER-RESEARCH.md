@@ -15,6 +15,45 @@ build environment's egress policy, so none of it is verified by this codebase �
 but it outranks every third-party figure below, and it is what
 `config/studio.php` is built from.
 
+#### Measured from a real generation, 4 Oct 2026 — the request lifecycle
+
+**This is the strongest evidence in the document**: not a page read, but one
+$0.35 Kling generation whose submit, status and result bodies were captured and
+committed verbatim to `tests/Fixtures/fal/kling-2-5-turbo-pro/`. Request id
+`01a10554-1955-7d51-a728-d37eb79b2e67`, prompt *"A calm river at dawn, slow
+drifting mist"*, 5s, 16:9.
+
+| Fact | Value | How it was settled |
+|---|---|---|
+| Submit URL | `POST https://queue.fal.run/<model-id>` | accepted |
+| `duration` type | **a number, not a string** | fal accepted `"duration":5`. **fal's own docs say the string `"5"`.** The docs are wrong. |
+| `aspect_ratio` | the string `"16:9"` | accepted |
+| Request URLs | `queue.fal.run/fal-ai/kling-video/requests/<id>[/status\|/cancel]` — the **first two segments** of the model id | the five-segment form returns **405** |
+| Result location | the **bare** request URL — no `/response` suffix | returned the clip |
+| Submit status | `IN_QUEUE` | observed |
+| Terminal status | `COMPLETED` | observed |
+| In-progress status | `IN_PROGRESS` — **still Tier B**, never observed | the job finished between polls |
+| Asset host | `https://v3b.fal.media/…` — **not** the API host | observed |
+| Reported cost | **none, in any body** | so `actual_cost_usd` stays null and the estimate stands |
+| `inference_time` | **151.29 s of compute for a 5-second clip** | `metrics.inference_time` |
+| `metrics` type | `[]` on submit, an **object** on completion | observed |
+| Terminal URLs | `status_url`, `response_url`, `cancel_url` are all **null** once finished | observed |
+
+Three consequences the code now carries:
+
+1. **The 405 is why `FalClient` falls through on 404 *and* 405.** It previously
+   treated 404 as the only wrong-shape signal, so a restarted worker
+   reconstructing the URL would have thrown and abandoned a billed clip.
+2. **No cost field means the rate in `config/studio.php` is the only number the
+   budget cap has.** Correcting it from the invoice is not optional.
+3. **Two values in these bodies are traps**, pinned by
+   `tests/Feature/FalCapturedShapesTest.php`: `inference_time` 151.29 must not be
+   read as a clip duration, and `file_size` 12,418,965 must not be read as a
+   price. An unanchored key regex reads both wrongly and passes every other test.
+
+`duration` needed no code change — which is the point of having let the provider
+adjudicate rather than picking between two disagreeing web pages.
+
 **Kling 2.5 Turbo Pro — read from the model page, 22 Sep 2026**
 
 | Fact | Value |

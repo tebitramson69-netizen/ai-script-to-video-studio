@@ -1,0 +1,11 @@
+{
+    "status": "COMPLETED",
+    "request_id": "01a10554-1955-7d51-a728-d37eb79b2e67",
+    "response_url": null,
+    "status_url": null,
+    "cancel_url": null,
+    "logs": null,
+    "metrics": {
+        "inference_time": 151.28999996185303
+    }
+}
