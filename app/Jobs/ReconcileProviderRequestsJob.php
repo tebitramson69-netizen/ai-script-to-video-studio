@@ -47,6 +47,11 @@ class ReconcileProviderRequestsJob extends StudioJob
             now()->addDay(),
         );
 
+        // Released before the driver check, and deliberately not limited to
+        // video: any adapter that claims and then fails to record an id strands
+        // its subject the same way, whatever driver happens to be bound now.
+        $this->releaseAbandonedClaims($completer);
+
         if (! $video instanceof QueueableVideoGenerator) {
             // The bound driver answers synchronously; nothing is ever outstanding.
             return;
@@ -64,6 +69,39 @@ class ReconcileProviderRequestsJob extends StudioJob
                 // finished and waiting to be collected.
                 try {
                     $completer->reconcile($request, $video);
+                } catch (\Throwable $e) {
+                    report($e);
+                }
+            });
+    }
+
+    /**
+     * Fail claims that were written but never submitted.
+     *
+     * These are invisible to the sweep above, which requires a provider request
+     * id — so without this pass they sit outstanding forever and their shot
+     * never leaves "rendering". Observed live on 2026-10-05: a submit POST timed
+     * out at 120s and left exactly this row.
+     *
+     * The age test is the safety. Inside the submit timeout another worker may
+     * be in the middle of submitClip() right now, and releasing its claim is how
+     * one shot becomes two charges. Past that window, no earlier submit can
+     * still be running.
+     */
+    protected function releaseAbandonedClaims(GenerationCompleter $completer): void
+    {
+        $grace = (int) config('studio.fal.timeout_seconds', 120) + 60;
+
+        ProviderRequest::query()
+            ->outstanding()
+            ->whereNull('provider_request_id')
+            ->where('created_at', '<', now()->subSeconds($grace))
+            ->orderBy('created_at')
+            ->limit($this->limit)
+            ->get()
+            ->each(function (ProviderRequest $request) use ($completer) {
+                try {
+                    $completer->releaseAbandonedClaim($request);
                 } catch (\Throwable $e) {
                     report($e);
                 }

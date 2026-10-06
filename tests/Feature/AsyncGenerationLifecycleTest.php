@@ -297,4 +297,127 @@ class AsyncGenerationLifecycleTest extends TestCase
         $this->assertFalse($claim->isAbandonedClaim(180));
         $this->assertTrue($claim->isDuplicateInFlight());
     }
+
+    public function test_the_sweep_releases_an_abandoned_claim_so_the_shot_can_be_rendered_again(): void
+    {
+        // The recovery half. The fix to ClaimResult stops new shots being
+        // stranded, but a row already stuck stays stuck: renderShots() selects
+        // ShotStatus::needingRender(), which is [Pending, Failed, Stale,
+        // Purged] - "Rendering" is not in it, so the UI reports "nothing to
+        // render" and the shot is unreachable.
+        $project = $this->projectWithShot();
+        $shot = $project->shots()->first();
+        $shot->forceFill(['status' => ShotStatus::Rendering])->save();
+
+        $claimed = ProviderRequest::create([
+            'project_id' => $project->getKey(),
+            'capability' => 'video.clip',
+            'provider' => 'fal',
+            'provider_model' => 'fake',
+            'fingerprint' => 'stranded-sweep-1',
+            'status' => ProviderRequestStatus::Pending,
+            'estimated_cost_usd' => 0.35,
+            'subject_type' => $shot->getMorphClass(),
+            'subject_id' => $shot->getKey(),
+        ]);
+        $claimed->forceFill(['created_at' => now()->subMinutes(10)])->save();
+
+        ReconcileProviderRequestsJob::dispatchSync();
+
+        $this->assertSame(ProviderRequestStatus::Failed, $claimed->fresh()->status);
+
+        // Back in a state renderShots() will pick up - the whole point.
+        $this->assertSame(ShotStatus::Failed, $shot->fresh()->status);
+        $this->assertContains($shot->fresh()->status, ShotStatus::needingRender());
+    }
+
+    public function test_the_sweep_leaves_a_recent_claim_alone(): void
+    {
+        // Inside the submit timeout another worker may be in submitClip() right
+        // now. Releasing its claim is how one shot becomes two charges.
+        $project = $this->projectWithShot();
+        $shot = $project->shots()->first();
+
+        $claimed = ProviderRequest::create([
+            'project_id' => $project->getKey(),
+            'capability' => 'video.clip',
+            'provider' => 'fal',
+            'provider_model' => 'fake',
+            'fingerprint' => 'recent-claim-1',
+            'status' => ProviderRequestStatus::Pending,
+            'estimated_cost_usd' => 0.35,
+            'subject_type' => $shot->getMorphClass(),
+            'subject_id' => $shot->getKey(),
+        ]);
+
+        ReconcileProviderRequestsJob::dispatchSync();
+
+        $this->assertSame(
+            ProviderRequestStatus::Pending,
+            $claimed->fresh()->status,
+            'A claim younger than the submit timeout must not be released.',
+        );
+    }
+
+    public function test_the_sweep_never_releases_a_request_that_has_an_id(): void
+    {
+        // A slow generation is not an abandoned one. Kling spent 151 seconds of
+        // inference on a 5-second clip, so age alone must never release work the
+        // provider has acknowledged.
+        //
+        // Capability is audio.music on purpose. The main reconcile pass filters
+        // on video.clip, so using that here would let the normal poll fail this
+        // row for an unrelated reason and the assertion could not tell the two
+        // apart - which is exactly what the first draft of this test did.
+        $project = $this->projectWithShot();
+        $shot = $project->shots()->first();
+
+        $submitted = ProviderRequest::create([
+            'project_id' => $project->getKey(),
+            'capability' => 'audio.music',
+            'provider' => 'fal',
+            'provider_model' => 'fake',
+            'fingerprint' => 'slow-live-sweep-1',
+            'status' => ProviderRequestStatus::InProgress,
+            'provider_request_id' => 'req-live-slow-2',
+            'estimated_cost_usd' => 0.35,
+            'subject_type' => $shot->getMorphClass(),
+            'subject_id' => $shot->getKey(),
+        ]);
+        $submitted->forceFill(['created_at' => now()->subHours(2)])->save();
+
+        ReconcileProviderRequestsJob::dispatchSync();
+
+        $this->assertSame(
+            ProviderRequestStatus::InProgress,
+            $submitted->fresh()->status,
+            'A submitted request must never be released for being old.',
+        );
+    }
+
+    public function test_the_release_is_not_limited_to_video(): void
+    {
+        // Any adapter that claims and then fails to record an id strands its
+        // subject the same way, so the release runs before the video driver
+        // check and ignores capability.
+        $project = $this->projectWithShot();
+        $shot = $project->shots()->first();
+
+        $claimed = ProviderRequest::create([
+            'project_id' => $project->getKey(),
+            'capability' => 'audio.music',
+            'provider' => 'fal',
+            'provider_model' => 'fake',
+            'fingerprint' => 'stranded-music-1',
+            'status' => ProviderRequestStatus::Pending,
+            'estimated_cost_usd' => 0.05,
+            'subject_type' => $shot->getMorphClass(),
+            'subject_id' => $shot->getKey(),
+        ]);
+        $claimed->forceFill(['created_at' => now()->subMinutes(10)])->save();
+
+        ReconcileProviderRequestsJob::dispatchSync();
+
+        $this->assertSame(ProviderRequestStatus::Failed, $claimed->fresh()->status);
+    }
 }

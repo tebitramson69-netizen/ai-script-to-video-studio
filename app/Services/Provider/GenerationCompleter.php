@@ -155,6 +155,28 @@ class GenerationCompleter
         }
     }
 
+    /**
+     * Release a claim the provider was never told about.
+     *
+     * A row claimed but never submitted has no provider request id, so the
+     * reconciliation sweep - which filters on a non-null id - can never reach
+     * it, and its shot stays "rendering" for good with nothing to explain why.
+     * Failing it puts the shot back into a state renderShots() will pick up.
+     *
+     * Routed through fail() rather than reimplemented, because releasing the
+     * subject alongside the request is the part that is easy to forget.
+     */
+    public function releaseAbandonedClaim(ProviderRequest $request): void
+    {
+        $this->fail(
+            $request,
+            ProviderFailureReason::Timeout,
+            'Claimed but never submitted — the request to the provider did not complete. '.
+            'Released so the shot can be rendered again. Check the provider dashboard first: '.
+            'the original attempt may still have been accepted and charged.',
+        );
+    }
+
     protected function fail(ProviderRequest $request, ProviderFailureReason $reason, string $message): void
     {
         $this->ledger->markFailed($request, $reason, $message);
