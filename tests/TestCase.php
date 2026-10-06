@@ -4,6 +4,7 @@ namespace Tests;
 
 use App\Services\Provider\DownloadUrlGuard;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
+use Illuminate\Support\Facades\Http;
 
 abstract class TestCase extends BaseTestCase
 {
@@ -22,6 +23,8 @@ abstract class TestCase extends BaseTestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        Http::preventStrayRequests();
 
         $this->app->bind(DownloadUrlGuard::class, fn () => new DownloadUrlGuard(
             // 93.184.216.34 is public, so hosts resolve and pass. A test that

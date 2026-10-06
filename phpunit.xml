@@ -32,5 +32,29 @@
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>
+
+        <!--
+            Money guard. The suite reads .env for anything not pinned here, and
+            .env on a working machine points the drivers at fal with a funded
+            key. Without these lines `php artisan test` submits real
+            generations: the end-to-end, audio and sound-effect tests each POST
+            to queue.fal.run, and fal bills a submit it accepts.
+
+            So every capability is pinned to its local fake, every model to the
+            free registry entry the expectations were written against, and the
+            credential to a string that is not a credential. A test that needs a
+            fal adapter builds one itself with a faked HTTP layer.
+        -->
+        <env name="STUDIO_IMAGE_DRIVER" value="fake"/>
+        <env name="STUDIO_VIDEO_DRIVER" value="fake"/>
+        <env name="STUDIO_SPEECH_DRIVER" value="fake"/>
+        <env name="STUDIO_MUSIC_DRIVER" value="fake"/>
+        <env name="STUDIO_SFX_DRIVER" value="fake"/>
+        <env name="STUDIO_IMAGE_MODEL" value="fake"/>
+        <env name="STUDIO_VIDEO_MODEL" value="fake"/>
+        <env name="STUDIO_SPEECH_MODEL" value="fake"/>
+        <env name="STUDIO_MUSIC_MODEL" value="fake"/>
+        <env name="STUDIO_SFX_MODEL" value="fake"/>
+        <env name="FAL_KEY" value="not-a-real-credential"/>
     </php>
 </phpunit>
