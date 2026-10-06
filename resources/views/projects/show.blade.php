@@ -128,11 +128,20 @@
                     <tr><td>{{ $label }}</td><td class="num">${{ number_format($usd, 4) }}</td></tr>
                 @endforeach
             </table>
-        @else
+        @elseif ($allDriversAreLocal)
             <p class="hint">
                 Every line item estimates $0.00 because the active drivers are the local
                 <code>fake</code> set. Point <code>STUDIO_*_DRIVER</code> at a real provider
                 and these become real money.
+            </p>
+        @else
+            {{-- A finished run has nothing left to estimate, which is not the
+                 same as nothing costing anything. Saying "these are fake" here
+                 told the owner their spend was pretend while the real figure
+                 sat directly above. --}}
+            <p class="hint">
+                Nothing further to generate, so there is nothing left to estimate.
+                <strong>Spent</strong> above is real money already charged.
             </p>
         @endif
 

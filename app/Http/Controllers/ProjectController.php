@@ -122,6 +122,13 @@ class ProjectController extends Controller
             'runtimeSeconds' => $costs->estimatedRuntimeSeconds($project),
             'exportBlockedReason' => $stateMachine->exportBlockedReason($project),
 
+            // Whether this run can cost anything at all. The cost panel used to
+            // infer it from "no line items", which is a different fact: a
+            // finished run has nothing left to estimate whatever driver is
+            // bound. That told an owner their spend was pretend while real money
+            // sat on the line above it.
+            'allDriversAreLocal' => $this->allDriversAreLocal(),
+
             // The same snapshot the polling endpoint returns, so the strip is
             // correct on first paint and the poller starts from a fingerprint it
             // can compare against rather than reloading the page on its first
@@ -189,6 +196,31 @@ class ProjectController extends Controller
      *
      * @return array<int, Collection<int, Asset>>
      */
+    /**
+     * True only when every generating driver is the local fake.
+     *
+     * Deliberately pessimistic: one real driver among five means this run can
+     * spend money, and the panel must not claim otherwise. The script
+     * structurer is excluded because `heuristic` is a local parser that bills
+     * nothing either way.
+     */
+    protected function allDriversAreLocal(): bool
+    {
+        foreach ([
+            'video_generator',
+            'image_generator',
+            'speech_synthesizer',
+            'music_generator',
+            'sound_effect_generator',
+        ] as $driver) {
+            if (config("studio.{$driver}") !== 'fake') {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     protected function candidatesByCharacter(Project $project): array
     {
         return $project->assets()
