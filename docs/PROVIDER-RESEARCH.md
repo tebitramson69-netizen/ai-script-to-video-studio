@@ -120,6 +120,49 @@ project page before anything is rendered.
 registry entry.** Getting FR-6 working on Kling means reading that endpoint's
 page too — its price, its durations, and how it takes the reference image.
 
+### What the audio adapters would send, computed 2026-10-06
+
+Captured by faking the HTTP layer and reading the recorded request, so these are
+the exact bytes each adapter puts on the wire — obtained for **$0.00**, before
+any of them has ever made a real call. All three remain **Tier B**: the shapes
+are what we send, not what fal has accepted.
+
+| Model | Request |
+| --- | --- |
+| Kokoro | `POST queue.fal.run/fal-ai/kokoro/american-english`<br>`{"text":"…"}` |
+| Stable Audio 3 | `POST queue.fal.run/fal-ai/stable-audio-3/medium/text-to-audio`<br>`{"prompt":"…","duration":30}` |
+| ElevenLabs SFX v2 | `POST queue.fal.run/fal-ai/elevenlabs/sound-effects/v2`<br>`{"prompt_influence":0.6,"text":"running water","duration_seconds":5}` |
+
+Three observations worth carrying into the first real audio run:
+
+1. **Both length fields are numbers**, matching what fal accepted for Kling's
+   `duration`. The open `duration` vs `seconds_total` question on Stable Audio is
+   about the field *name*, not its type.
+2. **Kokoro selects language by endpoint**, not by parameter — `american-english`
+   is in the path. `SpeechRequest::$voiceId` is not sent when null, so the model
+   default applies. That matters when Pidgin or French arrive (Phase 3).
+3. Every way these can be wrong is a **422, which fal does not bill**. The field
+   names are therefore the cheap risk.
+
+### The expensive risk at Step 6 is not the audio
+
+Priced from the registry constants:
+
+| Stage | Rate | A 60-second run |
+| --- | --- | --- |
+| Narration (Kokoro) | $0.02 / 1k chars | ~$0.02 |
+| Music (Stable Audio 3) | $0.05 flat per track | $0.05 |
+| SFX (ElevenLabs v2) | $0.0194 per effect | ~$0.10 for five |
+| **Audio subtotal** | | **~$0.17** |
+| **Video (Kling)** | $0.07/s, 5 or 10s per shot | **~$4** |
+
+**Audio is roughly 4% of Step 6; video is the rest.** So scrutiny belongs on the
+shot list, not the audio payloads — and specifically on two things already
+documented above: the `[5, 10]` rounding cliff, and that `buildPrompt()` sends
+the scene's terse `setting` label rather than the script's visual detail. A wrong
+audio field name costs a free 422. A thin prompt produces a billable clip of the
+wrong thing, five times over.
+
 ### Tier B — Third-party corroboration
 
 Search-indexed secondary pages, much of it SEO content written to rank for
