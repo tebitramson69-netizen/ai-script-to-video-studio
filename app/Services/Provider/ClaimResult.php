@@ -61,6 +61,30 @@ readonly class ClaimResult
     }
 
     /**
+     * The previous attempt failed for a reason the inputs did not cause, and
+     * the provider never acknowledged it.
+     *
+     * Both halves matter. `isRetryable()` separates a timeout or a network blip
+     * — where identical inputs would very likely succeed — from a content
+     * rejection or an invalid request, where they would fail identically and
+     * refusing is right. A null provider request id then confirms the provider
+     * holds nothing: if it had an id, the reconciler owns that lifecycle and
+     * resubmitting could pay for the same clip twice.
+     *
+     * Without this, a transient failure poisons the fingerprint permanently.
+     * The owner presses Render, is told "this exact request failed before", and
+     * has no way forward except reseeding — for a failure that was never about
+     * the request.
+     */
+    public function isRetryableFailure(): bool
+    {
+        return ! $this->isNew
+            && $this->request->status === ProviderRequestStatus::Failed
+            && $this->request->provider_request_id === null
+            && $this->request->isRetryable();
+    }
+
+    /**
      * Claimed, unsubmitted, and still inside the window where another worker
      * could legitimately be submitting it. Wait — do not submit alongside it.
      */

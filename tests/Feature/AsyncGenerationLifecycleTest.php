@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Contracts\VideoGenerator;
 use App\Enums\ProjectStatus;
+use App\Enums\ProviderFailureReason;
 use App\Enums\ProviderRequestStatus;
 use App\Enums\ShotStatus;
 use App\Jobs\ReconcileProviderRequestsJob;
@@ -15,6 +16,8 @@ use App\Services\Media\FfmpegRunner;
 use App\Services\Pipeline\PipelineRunner;
 use App\Services\Pipeline\ProgressSnapshot;
 use App\Services\Provider\ClaimResult;
+use App\Services\Provider\GenerationCompleter;
+use App\Services\Provider\GenerationLedger;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
@@ -419,5 +422,110 @@ class AsyncGenerationLifecycleTest extends TestCase
         ReconcileProviderRequestsJob::dispatchSync();
 
         $this->assertSame(ProviderRequestStatus::Failed, $claimed->fresh()->status);
+    }
+
+    public function test_a_deliberate_retry_after_a_transient_failure_submits(): void
+    {
+        // The second dead end, found 2026-10-06. The sweep released the
+        // abandoned claim correctly and the shot went Failed - then pressing
+        // Render was refused with "This exact request failed before. Change the
+        // prompt or reseed before retrying."
+        //
+        // That reasoning is right for a rejected prompt and wrong for a timeout:
+        // the inputs were never the problem, so identical inputs would very
+        // likely succeed. Refusing left the fingerprint poisoned for good and no
+        // way forward but reseeding.
+        $project = $this->projectWithShot();
+        $shot = $project->shots()->first();
+
+        app(PipelineRunner::class)->renderShots($project);
+
+        $request = ProviderRequest::where('project_id', $project->getKey())->firstOrFail();
+
+        // Wreck the row into the shape a timed-out submit leaves: claimed, no
+        // provider id, older than the grace period. The fake queue driver
+        // succeeds, so without this the row has an id - and a row with an id is
+        // correctly NOT resubmittable, which is what the first draft of this
+        // test accidentally asserted.
+        $request->forceFill([
+            'provider_request_id' => null,
+            'status' => ProviderRequestStatus::Pending,
+            'created_at' => now()->subMinutes(10),
+        ])->save();
+
+        // What the sweep leaves behind: failed, retryable, never acknowledged.
+        app(GenerationCompleter::class)->releaseAbandonedClaim($request->fresh());
+
+        $this->assertSame(ProviderRequestStatus::Failed, $request->fresh()->status);
+        $this->assertSame(ShotStatus::Failed, $shot->fresh()->status);
+
+        // The owner presses Render again. It must submit, not refuse.
+        app(PipelineRunner::class)->renderShots($project->fresh());
+
+        $this->assertNotNull(
+            $request->fresh()->provider_request_id,
+            'A deliberate retry after a transient failure must reach the provider.',
+        );
+        $this->assertSame(ShotStatus::Rendering, $shot->fresh()->status);
+    }
+
+    public function test_a_permanent_failure_still_refuses_the_same_inputs(): void
+    {
+        // The counterweight. A rejected prompt fails identically however many
+        // times it is sent, and each attempt may still be billed - so this one
+        // must keep refusing until the inputs change.
+        $project = $this->projectWithShot();
+        $shot = $project->shots()->first();
+
+        app(PipelineRunner::class)->renderShots($project);
+
+        $request = ProviderRequest::where('project_id', $project->getKey())->firstOrFail();
+
+        app(GenerationLedger::class)->markFailed(
+            $request,
+            ProviderFailureReason::ContentRejected,
+            'The prompt was refused by the safety filter.',
+        );
+
+        $shot->forceFill(['status' => ShotStatus::Failed])->save();
+
+        app(PipelineRunner::class)->renderShots($project->fresh());
+
+        $this->assertSame(
+            ProviderRequestStatus::Failed,
+            $request->fresh()->status,
+            'A content rejection must not be reopened by a retry.',
+        );
+    }
+
+    public function test_a_retryable_failure_that_reached_the_provider_is_not_resubmitted(): void
+    {
+        // Has an id, so the provider acknowledged it and may have billed it.
+        // The reconciler owns that lifecycle; resubmitting here would pay twice.
+        $project = $this->projectWithShot();
+        $shot = $project->shots()->first();
+
+        app(PipelineRunner::class)->renderShots($project);
+
+        $request = ProviderRequest::where('project_id', $project->getKey())->firstOrFail();
+        $before = $request->fresh()->provider_request_id;
+
+        $this->assertNotNull($before, 'The fake queue driver should have recorded an id.');
+
+        app(GenerationLedger::class)->markFailed(
+            $request,
+            ProviderFailureReason::Timeout,
+            'Timed out while polling.',
+        );
+
+        $shot->forceFill(['status' => ShotStatus::Failed])->save();
+
+        app(PipelineRunner::class)->renderShots($project->fresh());
+
+        $this->assertSame(
+            ProviderRequestStatus::Failed,
+            $request->fresh()->status,
+            'A failure the provider acknowledged must not be resubmitted on the same fingerprint.',
+        );
     }
 }

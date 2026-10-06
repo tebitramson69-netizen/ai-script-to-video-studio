@@ -136,6 +136,27 @@ class GenerationLedger
         return $request;
     }
 
+    /**
+     * Put a failed claim back in play so the same inputs can be submitted again.
+     *
+     * The fingerprint is unique, so a retry cannot create a second row — it has
+     * to reuse this one. Clearing the failure is what makes the owner's
+     * deliberate retry possible after a transient fault; the caller decides
+     * whether the failure was transient enough to deserve it.
+     */
+    public function reopen(ProviderRequest $request): ProviderRequest
+    {
+        $request->forceFill([
+            'status' => ProviderRequestStatus::Pending,
+            'failure_reason' => null,
+            'error_message' => null,
+            'completed_at' => null,
+            'created_at' => now(),
+        ])->save();
+
+        return $request;
+    }
+
     public function markFailed(
         ProviderRequest $request,
         ProviderFailureReason $reason,

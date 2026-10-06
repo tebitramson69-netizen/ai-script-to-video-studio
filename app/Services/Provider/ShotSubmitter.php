@@ -124,10 +124,26 @@ class ShotSubmitter
                 return SubmissionOutcome::claimAbandoned($claim->request);
             }
 
-            // The previous attempt at identical inputs failed terminally.
-            // Re-submitting the same inputs would fail the same way — a genuine
-            // retry needs different inputs, which is why regeneration reseeds.
-            return SubmissionOutcome::previouslyFailed($claim->request);
+            if ($claim->isRetryableFailure()) {
+                // The last attempt failed for a reason the inputs did not cause
+                // — a timeout, a dropped connection — and the provider never
+                // acknowledged it. Identical inputs would very likely succeed,
+                // so the owner's deliberate retry is honoured by reopening this
+                // row rather than refusing it.
+                //
+                // Reopened rather than re-created: the fingerprint is unique, so
+                // a retry has to reuse this row or it cannot exist at all.
+                $this->ledger->reopen($claim->request);
+
+                // Falls through to the submit below.
+            } else {
+                // The previous attempt at identical inputs failed terminally — a
+                // rejected prompt, a malformed request. Re-submitting the same
+                // inputs would fail the same way, and each attempt may still be
+                // billed, so a genuine retry needs different inputs. That is why
+                // regeneration reseeds.
+                return SubmissionOutcome::previouslyFailed($claim->request);
+            }
         }
 
         // Only a new claim records its subject. Overwriting it on a duplicate
