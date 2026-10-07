@@ -11,6 +11,7 @@ use App\Enums\AssetType;
 use App\Enums\ShotStatus;
 use App\Exceptions\BudgetExceededException;
 use App\Models\Project;
+use App\Models\Shot;
 use App\Services\Provider\ModelRegistry;
 use App\Services\Timing\NarrationEstimator;
 
@@ -171,20 +172,52 @@ class CostEstimator
     }
 
     /**
-     * How long the finished video is expected to run. Uses planned shot lengths
-     * once shots exist, and falls back to the narration estimate before that —
-     * so a cost figure can be shown on the scene-review screen, before any shot
-     * has been planned.
+     * How long the finished video is expected to run.
+     *
+     * The NARRATION-driven timeline (FR-18), not the sum of the clip lengths
+     * bought from the model. Those two are equal only when no shot carries
+     * slack, and the assembler trims every surplus second away, so quoting the
+     * purchased seconds overstated a real five-scene export by better than 2x
+     * — 25.0s promised against an 11.60s file.
+     *
+     * Deliberately routed through Shot::timelineDurationSeconds() rather than
+     * repeating the fallback here: the assembler, GenerateMusicJob and the
+     * end-to-end test all measure a shot that way, and a fourth definition is
+     * a fourth thing to drift.
+     *
+     * Falls back to the narration estimate before any shot exists, so a cost
+     * figure can still be shown on the scene-review screen.
      */
     public function estimatedRuntimeSeconds(Project $project): float
     {
-        $planned = (float) $project->shots()->sum('target_duration_seconds');
+        $planned = (float) $project->shots()->get()
+            ->sum(fn (Shot $shot) => $shot->timelineDurationSeconds());
 
         if ($planned > 0) {
             return $planned;
         }
 
         return $this->estimator->estimateSeconds($this->narrationText($project));
+    }
+
+    /**
+     * Seconds of clip bought beyond what the narration needs, and therefore
+     * trimmed off at assembly (FR-18).
+     *
+     * Surfaced rather than hidden. Once estimatedRuntimeSeconds() reports the
+     * true timeline the overspend stops being visible as a discrepancy, and
+     * money quietly spent on frames nobody will ever see is exactly what a cost
+     * panel exists to show. ShotPlan::slackSeconds() already names the same
+     * quantity per shot; this is the project total.
+     */
+    public function trimmedSurplusSeconds(Project $project): float
+    {
+        $shots = $project->shots()->get();
+
+        $bought = (float) $shots->sum('target_duration_seconds');
+        $used = (float) $shots->sum(fn (Shot $shot) => $shot->timelineDurationSeconds());
+
+        return round(max(0.0, $bought - $used), 2);
     }
 
     /**

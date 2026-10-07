@@ -119,7 +119,18 @@
             <div><span class="muted">Estimated for remaining run</span><strong>${{ number_format($estimate->estimatedUsd(), 2) }}</strong></div>
             <div><span class="muted">Projected total</span><strong>${{ number_format($estimate->projectedTotalUsd(), 2) }}</strong></div>
             <div><span class="muted">Budget cap</span><strong>${{ number_format((float) $project->budget_cap_usd, 2) }}</strong></div>
+            {{-- The NARRATION timeline (FR-18), which is what the export
+                 actually runs for — not the clip seconds bought. --}}
             <div><span class="muted">Estimated runtime</span><strong>{{ number_format($runtimeSeconds, 1) }}s</strong></div>
+
+            @if ($trimmedSurplusSeconds > 0.05)
+                {{-- Clip paid for and then trimmed away at assembly. Shown
+                     because it is real money spent on frames nobody sees. --}}
+                <div>
+                    <span class="muted">Trimmed surplus</span>
+                    <strong>{{ number_format($trimmedSurplusSeconds, 1) }}s</strong>
+                </div>
+            @endif
         </div>
 
         @if ($estimate->significantLineItems())

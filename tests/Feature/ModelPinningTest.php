@@ -6,6 +6,7 @@ use App\Models\Project;
 use App\Models\Scene;
 use App\Models\Shot;
 use App\Services\Cost\CostEstimator;
+use App\Services\Media\FfmpegRunner;
 use App\Services\Pipeline\PipelineRunner;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -88,6 +89,14 @@ class ModelPinningTest extends TestCase
 
     public function test_the_clip_request_names_the_model_it_should_render_on(): void
     {
+        // Guarded here rather than in setUp(), which is where the other suites
+        // put this check: only this test renders anything. Planning and costing
+        // above need no binary, and skipping the whole class to silence one
+        // failure would stop running two tests that work fine without ffmpeg.
+        if (! app(FfmpegRunner::class)->isAvailable()) {
+            $this->markTestSkipped('ffmpeg is not installed.');
+        }
+
         config(['studio.video_generator' => 'fake']);
 
         $project = Project::factory()->create([
