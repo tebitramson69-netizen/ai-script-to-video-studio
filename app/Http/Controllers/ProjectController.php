@@ -120,6 +120,7 @@ class ProjectController extends Controller
             'project' => $project,
             'estimate' => $costs->estimateRemainingRun($project),
             'runtimeSeconds' => $costs->estimatedRuntimeSeconds($project),
+            'trimmedSurplusSeconds' => $costs->trimmedSurplusSeconds($project),
             'exportBlockedReason' => $stateMachine->exportBlockedReason($project),
 
             // Whether this run can cost anything at all. The cost panel used to

@@ -26,13 +26,17 @@ composer install
 cp .env.example .env
 php artisan key:generate          # tests fail without an APP_KEY
 php artisan migrate
-php artisan test                  # 370 tests; renders a real .mp4
+php artisan test                  # renders a real .mp4; needs ffmpeg
 php artisan serve                 # http://127.0.0.1:8000
 php artisan studio:create-owner   # there is no public sign-up (§14)
 ```
 
 **PHP 8.3 or 8.4.** `composer.json` pins `config.platform.php` to `8.3.0` so the
-lock resolves against the version XAMPP commonly ships — do not remove that pin.
+lock resolves against the OLDEST version this project supports, rather than
+against whatever the machine that last ran `composer update` happened to have —
+do not remove that pin. Note this is *not* XAMPP's PHP: XAMPP ships 8.2, which
+`platform_check.php` refuses. See "Which terminal, and what resets in a new one"
+below.
 
 **FFmpeg is required** for the parts that matter. Several tests skip themselves
 without it, including the end-to-end test that asserts the export is a playable

@@ -27,7 +27,9 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           # composer.json requires ^8.3, and config.platform.php is pinned to
-          # 8.3.0 so the lock resolves against the version XAMPP commonly ships.
+          # 8.3.0 — the oldest PHP this project supports — so the lock resolves
+          # against that floor and the 8.3 leg of this matrix is a real test of
+          # it rather than of whatever resolved on a newer machine.
           php-version: ${{ matrix.php }}
           extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, gd
           coverage: none
