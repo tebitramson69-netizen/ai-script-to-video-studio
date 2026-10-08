@@ -38,8 +38,42 @@ return [
             'database' => env('DB_DATABASE', database_path('database.sqlite')),
             'prefix' => '',
             'foreign_key_constraints' => env('DB_FOREIGN_KEYS', true),
-            'busy_timeout' => null,
-            'journal_mode' => null,
+
+            /*
+             * Laravel ships both of these as null, which leaves SQLite in its
+             * default rollback-journal mode where a WRITER BLOCKS EVERY READER.
+             * That default assumes one process. This app runs four writers
+             * against the one file: the queue worker, the scheduler, the cache
+             * and the session table (QUEUE_CONNECTION, CACHE_STORE and
+             * SESSION_DRIVER are all `database`).
+             *
+             * Observed 2026-10-06 on Windows: the page froze solid while the
+             * audio stage was writing assets. `artisan serve` is single-threaded
+             * and cannot fork, so one request blocked on the lock stalls the
+             * whole UI — and the progress strip polls, so requests pile up
+             * behind it. The owner could not tell a hung browser from a hung
+             * pipeline, which is the worst moment for that ambiguity: it was
+             * mid-run with real money in flight.
+             *
+             * WAL lets readers and writers proceed concurrently, which removes
+             * the contention rather than managing it.
+             *
+             * busy_timeout is LOWERED, not introduced: left null, PHP's PDO
+             * SQLite driver applies its own 60-second default, so a blocked
+             * statement waits a full minute before it errors. That is precisely
+             * what the frozen page was doing. With WAL in place a collision can
+             * only be writer-against-writer, and every write here is a short
+             * insert or update — so five seconds is far longer than any of them
+             * needs, and a genuine deadlock surfaces in seconds instead of
+             * looking like a hang.
+             *
+             * Both are env-overridable because a deployment on MySQL or Postgres
+             * never reaches this block, and a filesystem without proper locking
+             * (some network shares) cannot do WAL at all.
+             */
+            'busy_timeout' => env('DB_BUSY_TIMEOUT', 5000),
+            'journal_mode' => env('DB_JOURNAL_MODE', 'WAL'),
+
             'synchronous' => null,
             'transaction_mode' => 'DEFERRED',
         ],
