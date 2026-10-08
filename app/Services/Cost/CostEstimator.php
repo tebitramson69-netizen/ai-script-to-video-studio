@@ -88,10 +88,24 @@ class CostEstimator
         }
 
         if ($project->narrationAsset() === null) {
-            $characters = mb_strlen($this->narrationText($project));
-            if ($characters > 0) {
-                $lineItems["Narration ({$characters} characters)"] =
-                    ($characters / 1000) * $this->speech->costPer1kCharactersUsd();
+            $segments = $this->narrationSegments($project);
+
+            if ($segments !== []) {
+                $characters = array_sum(array_map(mb_strlen(...), $segments));
+                $calls = count($segments);
+
+                // Summed per request, because that is how it is billed. Summing
+                // the characters first and dividing once under-charges by
+                // roughly the shot count — measured 2026-10-08 as $0.0031
+                // estimated against $0.10 actually charged for five calls.
+                $lineItems[sprintf(
+                    'Narration (%d call(s), %d characters)',
+                    $calls,
+                    $characters,
+                )] = array_sum(array_map(
+                    fn (string $text) => $this->speech->costForCharacters(mb_strlen($text)),
+                    $segments,
+                ));
             }
         }
 
@@ -168,6 +182,34 @@ class CostEstimator
     public function narrationText(Project $project): string
     {
         return trim(implode(' ', $project->scenes()->pluck('narration')->all()));
+    }
+
+    /**
+     * One entry per synthesis request the narration stage will make.
+     *
+     * Mirrors GenerateNarrationJob: it voices one shot per request and skips a
+     * shot with no words, which gets local silence rather than a paid call. So
+     * the unit of cost is the shot, not the project.
+     *
+     * Before shots are planned there is nothing finer to go on, so scenes stand
+     * in for them. That is the right proxy — the planner emits at least one
+     * shot per scene — and it errs low only while the number is still a guess.
+     *
+     * @return list<string>
+     */
+    protected function narrationSegments(Project $project): array
+    {
+        $shots = $project->shots()->orderBy('sequence')->pluck('narration_segment');
+
+        $source = $shots->isNotEmpty()
+            ? $shots
+            : $project->scenes()->orderBy('sequence')->pluck('narration');
+
+        return $source
+            ->map(fn ($text) => trim((string) $text))
+            ->filter(fn (string $text) => $text !== '')
+            ->values()
+            ->all();
     }
 
     /**

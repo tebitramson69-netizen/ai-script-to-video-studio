@@ -390,6 +390,17 @@ return [
                 'en' => env('STUDIO_KOKORO_EN_ENDPOINT', 'fal-ai/kokoro/american-english'),
                 'fr' => env('STUDIO_KOKORO_FR_ENDPOINT', 'fal-ai/kokoro/french'),
             ],
+            // Owner-verified 2026-10-08. The RATE is right; how it is applied
+            // was not. fal's usage page billed five calls of 20-40 characters
+            // $0.10 in total - $0.02 each, the full unit rate, for 39 characters
+            // of speech. A request is not billed pro rata: it buys at least one
+            // whole 1,000-character unit.
+            //
+            // This matters because the pipeline voices ONE SHOT PER REQUEST
+            // (FR-16), so narration costs shots x $0.02, not characters / 1000
+            // x $0.02. SpeechModelCapabilities::costForCharacters() rounds up
+            // per request and every caller sums per request. Before that fix
+            // the estimate read $0.0031 against $0.10 actually charged.
             'cost_per_1k_characters_usd' => 0.02,
 
             // VERIFY_IN_DASHBOARD: the voice parameter's name and its accepted

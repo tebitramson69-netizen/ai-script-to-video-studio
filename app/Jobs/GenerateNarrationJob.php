@@ -64,10 +64,17 @@ class GenerateNarrationJob extends StudioJob
         // this, pressing the audio button twice bills the whole narration twice.
         $stale = $shots->filter(fn ($shot) => $this->needsSynthesis($shot));
 
-        $totalCharacters = $stale->sum(fn ($shot) => mb_strlen((string) $shot->narration_segment));
+        // Billed per request, not per thousand characters across the project,
+        // and a wordless beat gets local silence rather than a paid call. So the
+        // charge is the sum over the shots that will actually be spoken, each
+        // rounded up to a whole billing unit the way the provider rounds it.
+        $chargeable = $stale
+            ->map(fn ($shot) => mb_strlen(trim((string) $shot->narration_segment)))
+            ->filter(fn (int $characters) => $characters > 0);
+
         $costs->assertCanSpend(
             $project,
-            ($totalCharacters / 1000) * $speech->costPer1kCharactersUsd(),
+            $chargeable->sum(fn (int $characters) => $speech->costForCharacters($characters)),
             'Narration',
         );
 

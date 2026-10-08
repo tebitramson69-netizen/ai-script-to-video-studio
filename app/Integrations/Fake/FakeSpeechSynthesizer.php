@@ -3,6 +3,7 @@
 namespace App\Integrations\Fake;
 
 use App\Contracts\Data\GeneratedMedia;
+use App\Contracts\Data\SpeechModelCapabilities;
 use App\Contracts\Data\SpeechRequest;
 use App\Contracts\ProviderException;
 use App\Contracts\SpeechSynthesizer;
@@ -50,7 +51,7 @@ class FakeSpeechSynthesizer implements SpeechSynthesizer
             path: $path,
             mime: 'audio/wav',
             model: 'fake-tts-v1',
-            costUsd: (mb_strlen($request->text) / 1000) * $this->costPer1kCharactersUsd(),
+            costUsd: $this->costForCharacters(mb_strlen($request->text)),
 
             // Probe rather than trust the requested duration: the real drivers
             // must report what the provider actually returned, and the pipeline
@@ -63,6 +64,23 @@ class FakeSpeechSynthesizer implements SpeechSynthesizer
                 'voice_id' => $request->voiceId,
             ],
         );
+    }
+
+    /**
+     * Rounded up per request exactly as the real provider bills, so budget
+     * behaviour exercised against the fake matches what fal will charge. A fake
+     * that prices work differently from the thing it stands in for teaches the
+     * cap the wrong lesson.
+     */
+    public function costForCharacters(int $characters): float
+    {
+        if ($characters <= 0) {
+            return 0.0;
+        }
+
+        $units = (int) ceil($characters / SpeechModelCapabilities::BILLING_UNIT_CHARACTERS);
+
+        return round($units * $this->costPer1kCharactersUsd(), 6);
     }
 
     public function costPer1kCharactersUsd(): float

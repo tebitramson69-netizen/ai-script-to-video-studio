@@ -122,6 +122,11 @@ class FalSpeechSynthesizer implements SpeechSynthesizer
         );
     }
 
+    public function costForCharacters(int $characters): float
+    {
+        return $this->capabilities()->costForCharacters($characters);
+    }
+
     public function costPer1kCharactersUsd(): float
     {
         return $this->capabilities()->costPer1kCharactersUsd;
