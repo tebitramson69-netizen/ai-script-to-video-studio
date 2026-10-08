@@ -101,13 +101,20 @@
             Work has been submitted to the provider and paid for, but no
             reconciliation sweep has run in the last
             {{ (int) (App\Services\Pipeline\ProgressSnapshot::RECONCILER_STALE_AFTER_SECONDS / 60) }}
-            minutes. Start the scheduler in its own terminal:
+            minutes.
         </p>
-        <pre><code>php artisan schedule:work</code></pre>
+        <p>
+            <strong>Both of these must be running, each in its own terminal.</strong>
+            The sweep is itself a queued job: the scheduler puts it on the queue
+            and the worker is what actually runs it, so starting one without the
+            other leaves work paid for and uncollected.
+        </p>
+        <pre><code>php artisan queue:work
+php artisan schedule:work</code></pre>
         <p class="muted small">
-            <code>queue:work</code> runs the jobs; the scheduler is what sweeps
-            finished provider requests. Both are needed once a queueing provider
-            is configured.
+            To see which half is missing, run <code>php artisan studio:doctor</code>.
+            Jobs piling up means the worker is down; an empty queue means the
+            scheduler is.
         </p>
     </div>
 
