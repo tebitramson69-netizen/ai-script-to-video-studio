@@ -38,15 +38,36 @@ class FakeSoundEffectGenerator implements SoundEffectGenerator
             path: $path,
             mime: 'audio/wav',
             model: 'fake-sfx-v1',
-            costUsd: $this->costPerEffectUsd(),
+            costUsd: $this->costForSeconds($request->durationSeconds),
             durationSeconds: $this->ffmpeg->durationSeconds($path),
             meta: ['description' => $request->description],
+        );
+    }
+
+    /**
+     * Rounded up per whole second exactly as the real provider bills, so budget
+     * behaviour exercised against the fake matches what fal will charge.
+     */
+    public function costForSeconds(float $seconds): float
+    {
+        if ($seconds <= 0.0) {
+            return 0.0;
+        }
+
+        return round(
+            $this->costPerEffectUsd() + (ceil($seconds) * $this->costPerSecondUsd()),
+            6,
         );
     }
 
     public function costPerEffectUsd(): float
     {
         return (float) config('studio.fake_costs.sfx_per_effect_usd', 0.0);
+    }
+
+    protected function costPerSecondUsd(): float
+    {
+        return (float) config('studio.fake_costs.sfx_per_second_usd', 0.0);
     }
 
     public function providerName(): string

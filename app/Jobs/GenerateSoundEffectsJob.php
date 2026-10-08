@@ -59,7 +59,12 @@ class GenerateSoundEffectsJob extends StudioJob
         // money and then refuse, which is the worst of both outcomes.
         $costs->assertCanSpend(
             $project,
-            count($pending) * $sfx->costPerEffectUsd(),
+            // Each at its own length: this endpoint bills by the second, so the
+            // batch total is not the count times a flat rate.
+            array_sum(array_map(
+                fn (Scene $scene) => $sfx->costForSeconds($this->sceneDuration($scene)),
+                $pending,
+            )),
             sprintf('Sound effects (%d)', count($pending)),
         );
 

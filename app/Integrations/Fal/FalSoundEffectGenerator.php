@@ -107,7 +107,7 @@ class FalSoundEffectGenerator implements SoundEffectGenerator
 
             // Flat per effect, so the length does not enter into it. The budget
             // question for SFX is how many scenes carry a cue.
-            costUsd: $model->costPerEffectUsd,
+            costUsd: $model->costForSeconds($request->durationSeconds),
 
             // Measured. The assembler needs the real length to decide how many
             // times an effect repeats across its scene, and a requested length
@@ -132,6 +132,11 @@ class FalSoundEffectGenerator implements SoundEffectGenerator
                 'actual_cost_usd' => $mapper->actualCostUsd($body),
             ],
         );
+    }
+
+    public function costForSeconds(float $seconds): float
+    {
+        return $this->capabilities()->costForSeconds($seconds);
     }
 
     public function costPerEffectUsd(): float

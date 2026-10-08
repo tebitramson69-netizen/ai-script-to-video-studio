@@ -11,6 +11,7 @@ use App\Enums\AssetType;
 use App\Enums\ShotStatus;
 use App\Exceptions\BudgetExceededException;
 use App\Models\Project;
+use App\Models\Scene;
 use App\Services\Provider\ModelRegistry;
 use App\Services\Timing\NarrationEstimator;
 
@@ -122,14 +123,27 @@ class CostEstimator
         // structurer found no ambience in — which is most of them — and an
         // estimate that is routinely too high is one the owner learns to ignore.
         $pendingEffects = $project->scenes()
+            ->with('shots')
             ->whereNotNull('sfx_cue')
             ->where('sfx_cue', '!=', '')
             ->whereDoesntHave('assets', fn ($q) => $q->where('type', AssetType::SoundEffect))
-            ->count();
+            ->get()
+            // GenerateSoundEffectsJob skips a scene with no timeline, so an
+            // estimate that charged for one would gate on money never spent.
+            ->filter(fn (Scene $scene) => $scene->timelineDurationSeconds() > 0);
 
-        if ($pendingEffects > 0) {
-            $lineItems["Sound effects ({$pendingEffects} scene(s))"] =
-                $pendingEffects * $this->soundEffects->costPerEffectUsd();
+        if ($pendingEffects->isNotEmpty()) {
+            // Priced at each scene's own length, because fal bills this
+            // endpoint in seconds: a 3-second ambience and a 22-second one
+            // differ by 7x. Counting scenes and multiplying by a flat rate
+            // over-charges the short ones and under-charges the long ones,
+            // and only the second of those is dangerous.
+            $lineItems[sprintf('Sound effects (%d scene(s))', $pendingEffects->count())] =
+                $pendingEffects->sum(
+                    fn (Scene $scene) => $this->soundEffects->costForSeconds(
+                        $scene->timelineDurationSeconds(),
+                    ),
+                );
         }
 
         return new CostEstimate(

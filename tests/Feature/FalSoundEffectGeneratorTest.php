@@ -186,21 +186,38 @@ class FalSoundEffectGeneratorTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public function test_it_is_costed_per_effect_not_per_second(): void
+    /**
+     * This test used to assert the opposite, under the name
+     * test_it_is_costed_per_effect_not_per_second, and it was wrong.
+     *
+     * It pinned a researched assumption — "pricing is per effect, $0.0194" —
+     * rather than an observed one, so it passed happily while the estimate was
+     * out by 3x on a short effect and 2x the other way on a long one. fal's
+     * usage table settled it on 2026-10-08: Unit Type Seconds, $0.002, with two
+     * effects on 2.60s and 2.25s scenes billed as 6.00 seconds.
+     *
+     * Kept rather than deleted, inverted rather than loosened: a test that once
+     * pinned the wrong thing is the best place to record what the right thing is.
+     */
+    public function test_it_is_costed_per_second_not_per_effect(): void
     {
         $this->skipWithoutFfmpeg();
 
-        // Flat per effect, so a 3-second one-shot and a 22-second ambience cost
-        // the same. The budget question for SFX is how many scenes, not how long.
         // Re-faked between calls because a faked response body is a stream that
         // can only be read once.
         $this->fakeFalReturning(2.0);
         $short = $this->generator()->generate(new SoundEffectRequest('a crackling open fire', 3.0));
         $long = $this->generator()->generate(new SoundEffectRequest('a crackling open fire', 22.0));
 
-        $this->assertSame(0.0194, $short->costUsd);
-        $this->assertSame(0.0194, $long->costUsd);
-        $this->assertSame(0.0194, $this->generator()->costPerEffectUsd());
+        // 3s x $0.002 against 22s x $0.002 — seven times the price, where the
+        // flat model said they were identical.
+        $this->assertSame(0.006, $short->costUsd);
+        $this->assertSame(0.044, $long->costUsd);
+
+        // The flat component is genuinely zero on this model now, which is why
+        // the batch total has to come from costForSeconds().
+        $this->assertSame(0.0, $this->generator()->costPerEffectUsd());
+        $this->assertSame(0.006, $this->generator()->costForSeconds(2.60));
     }
 
     public function test_the_duration_is_measured_from_the_file(): void

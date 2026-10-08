@@ -13,9 +13,15 @@ namespace App\Contracts\Data;
  * from a clip that was not generated to loop has an audible seam every 22
  * seconds, and the seam lands in the middle of the narration.
  *
- * Pricing is per EFFECT, not per second — $0.0194 on the default — which is why
- * this keeps `costPerEffectUsd` rather than the dual-rate shape the music DTO
- * needed. The budget question here is not "how long?" but "how many scenes?".
+ * Pricing was documented here as per EFFECT rather than per second, and that was
+ * wrong. fal's usage table, owner-read 2026-10-08, bills
+ * elevenlabs/sound-effects/v2 in SECONDS at $0.002: two effects on scenes of
+ * 2.60s and 2.25s came to 6.00 Seconds, which is ceil(2.60) + ceil(2.25). So it
+ * carries the music DTO's dual-rate shape after all, and the budget question is
+ * "how many scenes AND how long?".
+ *
+ * The flat field stays because it is the right shape for a model genuinely
+ * billed per effect, and stable-audio-3-sfx has still never been measured.
  */
 readonly class SoundEffectModelCapabilities
 {
@@ -28,6 +34,7 @@ readonly class SoundEffectModelCapabilities
         public string $label,
         public ?string $endpoint,
         public float $costPerEffectUsd = 0.0,
+        public float $costPerSecondUsd = 0.0,
         public float $minDurationSeconds = 0.5,
         public float $maxDurationSeconds = 22.0,
         public string $promptParameter = 'text',
@@ -47,6 +54,7 @@ readonly class SoundEffectModelCapabilities
             label: $config['label'] ?? $key,
             endpoint: $config['endpoint'] ?? null,
             costPerEffectUsd: (float) ($config['cost_per_effect_usd'] ?? 0.0),
+            costPerSecondUsd: (float) ($config['cost_per_second_usd'] ?? 0.0),
             minDurationSeconds: (float) ($config['min_duration_seconds'] ?? 0.5),
             maxDurationSeconds: (float) ($config['max_duration_seconds'] ?? 22.0),
             promptParameter: (string) ($config['prompt_parameter'] ?? 'text'),
@@ -81,6 +89,29 @@ readonly class SoundEffectModelCapabilities
     public function loopsToCover(float $seconds): bool
     {
         return $seconds > $this->maxDurationSeconds + 0.01;
+    }
+
+    /**
+     * What ONE effect costs at the length it will actually be rendered.
+     *
+     * Billable seconds are rounded UP to a whole second, which is what the
+     * invoice shows: 2.60s and 2.25s were billed as 3 and 3. That is the same
+     * rule as Kokoro's 1,000-character unit — fal bills a request by whole
+     * units of whatever its unit is — and it is the over-estimate direction,
+     * so it is also the safe one.
+     *
+     * Clamped first, because clamping is what the provider will render; a
+     * 40-second scene buys 22 seconds of ambience and the assembler loops it.
+     */
+    public function costForSeconds(float $seconds): float
+    {
+        if ($seconds <= 0.0) {
+            return 0.0;
+        }
+
+        $billableSeconds = (int) ceil($this->clampDuration($seconds));
+
+        return round($this->costPerEffectUsd + ($billableSeconds * $this->costPerSecondUsd), 6);
     }
 
     public function sendsParameter(string $name): bool

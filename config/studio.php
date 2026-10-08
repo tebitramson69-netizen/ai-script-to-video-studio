@@ -552,11 +552,12 @@ return [
             'label' => 'Stable Audio 3 Medium (fal)',
             'endpoint' => env('STUDIO_STABLE_AUDIO_ENDPOINT', 'fal-ai/stable-audio-3/medium/text-to-audio'),
 
-            // Published as $0.0417 per request. Rounded up under the
-            // over-estimate rule, so the budget cap errs toward refusing a run
-            // rather than overspending on one; at this scale the difference
-            // cannot threaten a run either way.
-            'cost_per_request_usd' => 0.05,
+            // Owner-verified 2026-10-08. fal's usage table bills this endpoint
+            // by the unit "Audios" at $0.0376 — one unit for one request,
+            // whatever its length. The shape below was already right; only the
+            // constant moves. The published $0.0417 and the $0.05 we rounded it
+            // up to were both over by a third.
+            'cost_per_request_usd' => 0.0376,
             'cost_per_second_usd' => 0.0,
 
             'min_duration_seconds' => 1.0,
@@ -681,7 +682,15 @@ return [
             'label' => 'ElevenLabs Sound Effects V2 (fal)',
             'endpoint' => env('STUDIO_ELEVENLABS_SFX_ENDPOINT', 'fal-ai/elevenlabs/sound-effects/v2'),
 
-            'cost_per_effect_usd' => 0.0194,
+            // Owner-verified 2026-10-08, and the shape was wrong, not just the
+            // number. fal bills this endpoint in SECONDS at $0.002: two effects
+            // on scenes of 2.60s and 2.25s came to 6.00 Seconds, which is
+            // ceil(2.60) + ceil(2.25). The old flat $0.0194 an effect over-
+            // charged the 3-second ambience this project actually generates by
+            // 3x, and UNDER-charged a 22-second one by 2x — and only the second
+            // of those can let a run past the cap it could not afford.
+            'cost_per_effect_usd' => 0.0,
+            'cost_per_second_usd' => 0.002,
 
             'min_duration_seconds' => 0.5,
             'max_duration_seconds' => 22.0,
@@ -771,6 +780,10 @@ return [
         'tts_per_1k_chars_usd' => (float) env('STUDIO_FAKE_TTS_COST', 0.0),
         'music_per_minute_usd' => (float) env('STUDIO_FAKE_MUSIC_COST', 0.0),
         'sfx_per_effect_usd' => (float) env('STUDIO_FAKE_SFX_COST', 0.0),
+
+        // The real default bills by the second, so the fake carries both knobs
+        // and the tests that exercise the cap can price it the same way.
+        'sfx_per_second_usd' => (float) env('STUDIO_FAKE_SFX_SECOND_COST', 0.0),
     ],
 
     /*

@@ -163,6 +163,70 @@ the scene's terse `setting` label rather than the script's visual detail. A wron
 audio field name costs a free 422. A thin prompt produces a billable clip of the
 wrong thing, five times over.
 
+#### Every rate read off the invoice, 8 Oct 2026 — Tier A
+
+The first complete run finished and the one assertion no test can make was
+made: does fal agree? It did not, by $0.06 on $2.60. Chasing that gap produced
+the only page in this document where **every number is owner-read**, from
+Settings → Usage → Model API Usage, current billing cycle:
+
+| Endpoint | Quantity | Unit Type | Unit Price | Spend |
+| --- | --- | --- | --- | --- |
+| `fal-ai/kling-video/v2.5-turbo/pro/text-to-video` | 35.00 | Seconds | $0.07 | $2.45 |
+| `fal-ai/kokoro/american-english` | 5.00 | 1000 Characters | $0.02 | $0.10 |
+| `fal-ai/stable-audio-3/medium/text-to-audio` | 1.00 | Audios | $0.0376 | $0.04 |
+| `fal-ai/elevenlabs/sound-effects/v2` | 6.00 | Seconds | $0.002 | $0.01 |
+
+Quantities total 47.00 and spend totals $2.60, both matching the account
+summary. The work behind it: 1 capture clip + 1 Step 5 clip + 5 Step 6 clips
+(35 seconds of Kling), 5 narration segments, 1 music bed, 2 sound effects.
+
+**The rule behind all four rows: fal bills per request, rounded up to the
+endpoint's unit.** Three independent confirmations in one invoice:
+
+- Five Kokoro calls of 20–40 characters each counted as **5.00 units of
+  1000 Characters**. Not 0.155 units — five.
+- Two sound effects on scenes of 2.60s and 2.25s counted as **6.00 Seconds**:
+  `ceil(2.60) + ceil(2.25)`.
+- Stable Audio's unit is the request itself, so rounding cannot show.
+
+Kling can neither confirm nor deny it, because its durations are already
+quantised to the `[5, 10]` ladder — which is exactly why its estimate was the
+only one that was never wrong.
+
+#### What this corrected, and in which direction
+
+| Value | Was | Is | Direction |
+| --- | --- | --- | --- |
+| Kling $/s | $0.07 | $0.07 | exact, twice verified |
+| Narration | `chars ÷ 1000 × $0.02` once | `$0.02 per request` | **32× under** |
+| Stable Audio 3 | $0.05 per request | $0.0376 per request | 33% over |
+| ElevenLabs SFX | $0.0194 **per effect** | **$0.002 per second** | both ways |
+
+Only one of those directions is dangerous. An over-estimate costs a retry; an
+under-estimate lets a run past a cap it cannot afford. Narration was 32× under,
+and the SFX flat rate under-charges any effect longer than ~10 seconds — up to
+2× at the model's 22-second ceiling, which `sceneDuration()` reaches on any
+scene with a few shots in it.
+
+The table two sections above — "The expensive risk at Step 6 is not the audio"
+— was right about the conclusion and wrong about three of its four rates. It is
+left standing rather than silently corrected, because the reasoning it records
+(audio is ~4% of a run, so scrutinise the shot list) survived contact with the
+invoice intact: measured audio came to $0.15 against $2.45 of video, which is
+6%, not 4%, and still not where the money is.
+
+#### What remains unmeasured
+
+- `flux-schnell` — never called. The Step 6 script had no character names, so
+  `GenerateCharacterCandidatesJob` never ran. Still Tier B.
+- `ace-step`, `elevenlabs-v3`, `stable-audio-3-sfx`, both Veo entries and the
+  Kling image-to-video entry — registered, never called.
+- Whether a Kokoro call **above** 1,000 characters bills 2 units or 1.5. Every
+  call in this sample was under the unit, so "round up" and "one-unit minimum"
+  are indistinguishable here. The code rounds up, which is the higher of the
+  two and therefore the safe side.
+
 ### Tier B — Third-party corroboration
 
 Search-indexed secondary pages, much of it SEO content written to rank for

@@ -159,10 +159,14 @@ class FalMusicGeneratorTest extends TestCase
     {
         // Stable Audio 3 bills per request, not per second. A per-minute rate
         // cannot express that, which is why the contract takes a duration.
+        //
+        // $0.0376 is owner-verified from fal's usage table on 2026-10-08 —
+        // Unit Type "Audios", quantity 1.00 for an 11.63-second bed. The shape
+        // this test pins was right all along; the constant was a third high.
         $music = $this->generator();
 
-        $this->assertSame(0.05, $music->costForSeconds(10.0));
-        $this->assertSame(0.05, $music->costForSeconds(300.0));
+        $this->assertSame(0.0376, $music->costForSeconds(10.0));
+        $this->assertSame(0.0376, $music->costForSeconds(300.0));
     }
 
     public function test_a_per_second_model_is_costed_by_the_second(): void
