@@ -669,8 +669,10 @@ return [
         ],
 
         // The default when the fal driver is bound. Chosen on schema clarity
-        // rather than price, because at $0.0194 an effect the price cannot
-        // decide anything: a six-scene video is 12 cents against a ~$4.48 run.
+        // rather than price, and the price still cannot decide anything: at
+        // $0.002 a second, six scenes of three seconds is about 4 cents against
+        // a ~$4.48 run. (It was registered believing $0.0194 an effect; the
+        // invoice corrected both the rate and its shape on 2026-10-08.)
         //
         // What it wins on is that its schema is documented and specific —
         // duration_seconds is a real range (0.5-22) and passing null lets the

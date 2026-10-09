@@ -56,12 +56,14 @@ class GenerateNarrationJob extends StudioJob
             return;
         }
 
-        if ($this->force) {
-            $this->discardExistingAudio($project, $shots);
-        }
-
         // NFR-3: only pay for what is actually missing or has changed. Without
         // this, pressing the audio button twice bills the whole narration twice.
+        //
+        // Computed BEFORE any discard, and the discard waits until the cap has
+        // been cleared below. needsSynthesis() returns true for every shot when
+        // forced, so the figure is identical either way - but the order is not:
+        // discarding first meant a forced regeneration that trips the cap threw
+        // with the old audio already deleted and no replacement generated.
         $stale = $shots->filter(fn ($shot) => $this->needsSynthesis($shot));
 
         // Billed per request, not per thousand characters across the project,
@@ -77,6 +79,12 @@ class GenerateNarrationJob extends StudioJob
             $chargeable->sum(fn (int $characters) => $speech->costForCharacters($characters)),
             'Narration',
         );
+
+        // Past the cap, so the old audio can go. Nothing between the assertion
+        // and here spends or destroys anything.
+        if ($this->force) {
+            $this->discardExistingAudio($project, $shots);
+        }
 
         // Nothing changed and a combined track already exists: there is no work
         // to do and nothing to charge for.

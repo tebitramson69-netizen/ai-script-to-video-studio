@@ -67,27 +67,40 @@ return [
              *
              * SQLite returns BUSY without ever invoking the busy handler when a
              * connection holding a read lock tries to upgrade to a write while
-             * another connection is writing. That is a deadlock rather than
-             * congestion, so waiting cannot resolve it and SQLite refuses at
-             * once. The sweep reads outstanding()
-             * and then writes each result: exactly that shape. No busy timeout
-             * of any length would have saved it.
+             * another is writing: a deadlock rather than congestion, so waiting
+             * cannot resolve it. The sweep reads outstanding() and then writes
+             * each result, which is exactly that shape. No busy timeout of any
+             * length would have saved it.
              *
-             * So journal_mode is the fix. WAL lets readers and writers proceed
-             * concurrently, which removes the conflict instead of waiting on it.
+             * WAL is the fix for the FREEZE, because readers and writers stop
+             * blocking each other and the page no longer waits on the pipeline.
              *
-             * busy_timeout is housekeeping, and LOWERED rather than introduced:
-             * null leaves PDO's 60-second default, so the collisions WAL does
-             * not prevent — writer against writer — stall for a minute before
-             * erroring, which is indistinguishable from a hang. Every write here
-             * is a short insert or update, so five seconds is far longer than
-             * any needs and a real deadlock surfaces in seconds.
+             * Be careful not to claim more than that. WAL does NOT make the
+             * upgrade case impossible — there it returns SQLITE_BUSY_SNAPSHOT,
+             * which also bypasses the busy handler. What it does is narrow the
+             * window hard: the upgrade now fails only if another connection
+             * actually COMMITTED since this one's read snapshot, rather than
+             * whenever anyone merely holds a write lock. The real cure is
+             * transaction_mode IMMEDIATE, deliberately not set here because
+             * SQLiteConnection::executeBeginTransactionStatement() only honours
+             * it on PHP >= 8.4 — it would apply in development and be silently
+             * ignored under this repo's 8.3.0 platform pin in CI, which is worse
+             * than not having it.
+             *
+             * busy_timeout is set to PDO's own default rather than left to be
+             * inherited, so the value is visible. It was briefly lowered to 5s
+             * and that was a mistake: WAL had already fixed the freeze, so the
+             * only thing the shorter wait bought was a higher chance of a write
+             * failing — and AssetRecorder::record() runs immediately after a
+             * paid download, where a failed write means the provider was paid
+             * and the spend was never recorded. A page waiting is cheap next to
+             * a charge nothing knows about.
              *
              * Both are env-overridable because a deployment on MySQL or Postgres
              * never reaches this block, and a filesystem without proper locking
              * (some network shares) cannot do WAL at all.
              */
-            'busy_timeout' => env('DB_BUSY_TIMEOUT', 5000),
+            'busy_timeout' => env('DB_BUSY_TIMEOUT', 60000),
             'journal_mode' => env('DB_JOURNAL_MODE', 'WAL'),
 
             'synchronous' => null,

@@ -169,7 +169,7 @@ class HeuristicScriptStructurer implements ScriptStructurer
      * Deliberately unlike settingFor(), which always returns something: that
      * falls back to "Scene 3" because a scene must have a setting to render at
      * all. A cue must NOT fall back, because every cue is a paid request
-     * ($0.0194 an effect) and a cue nobody asked for is a sound that does not
+     * ($0.002 a second) and a cue nobody asked for is a sound that does not
      * belong in the video — worse than silence, because someone has to notice it
      * and ask for the render again.
      *

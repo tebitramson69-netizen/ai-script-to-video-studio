@@ -90,6 +90,17 @@ class PipelineRunner
      */
     public function regenerateShot(Project $project, Shot $shot, ?string $newPrompt = null): void
     {
+        // Checked before anything is touched. The charge does not depend on the
+        // prompt or the seed, so there is no reason to mutate the shot first -
+        // and doing so left a refused regeneration with its clip invalidated,
+        // its seed re-rolled and no replacement coming.
+        $this->costs->assertCanSpend(
+            $project,
+            (float) $shot->target_duration_seconds
+                * app(ModelRegistry::class)->forProject($project)->costPerSecondUsd(),
+            "Shot #{$shot->sequence}",
+        );
+
         $this->stateMachine->shotInvalidated($project, $shot);
 
         // Always a fresh seed, prompt change or not. Re-rolling the same seed
@@ -101,13 +112,6 @@ class PipelineRunner
             'prompt' => ($newPrompt !== null && trim($newPrompt) !== '') ? $newPrompt : $shot->prompt,
             'seed' => random_int(1, 2_000_000_000),
         ])->save();
-
-        $this->costs->assertCanSpend(
-            $project,
-            (float) $shot->target_duration_seconds
-                * app(ModelRegistry::class)->forProject($project)->costPerSecondUsd(),
-            "Shot #{$shot->sequence}",
-        );
 
         $shot->forceFill(['status' => ShotStatus::Queued])->save();
         RenderShotJob::dispatch($shot->getKey());
@@ -151,7 +155,14 @@ class PipelineRunner
      */
     public function regenerateNarration(Project $project): void
     {
-        $this->costs->assertWithinBudget($project);
+        // The FORCED charge, not the remaining-run estimate: after a finished
+        // run there is nothing remaining, so that estimate reads $0.00 and
+        // would wave through a full re-synthesis.
+        $this->costs->assertCanSpend(
+            $project,
+            $this->costs->forcedNarrationUsd($project),
+            'Narration (regenerate)',
+        );
         $this->stateMachine->audioInvalidated($project);
 
         Bus::chain([
@@ -168,7 +179,11 @@ class PipelineRunner
      */
     public function regenerateMusic(Project $project): void
     {
-        $this->costs->assertWithinBudget($project);
+        $this->costs->assertCanSpend(
+            $project,
+            $this->costs->forcedMusicUsd($project),
+            'Music (regenerate)',
+        );
         $this->stateMachine->audioInvalidated($project);
 
         Bus::chain([
@@ -190,7 +205,11 @@ class PipelineRunner
      */
     public function regenerateSoundEffects(Project $project): void
     {
-        $this->costs->assertWithinBudget($project);
+        $this->costs->assertCanSpend(
+            $project,
+            $this->costs->forcedSoundEffectsUsd($project),
+            'Sound effects (regenerate)',
+        );
         $this->stateMachine->audioInvalidated($project);
 
         Bus::chain([

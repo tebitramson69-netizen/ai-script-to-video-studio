@@ -152,7 +152,12 @@ class DoctorCommand extends Command
         // database being unreachable is itself one of the answers.
         try {
             $lastRun = Cache::get(ProgressSnapshot::RECONCILER_HEARTBEAT_KEY);
-            $queued = (int) DB::table('jobs')->count();
+
+            // Waiting work only. A reserved row is a job a worker is running
+            // right now, and a long RenderShotJob sits reserved for minutes -
+            // counting it would read a DEAD SCHEDULER as a dead worker, which
+            // is the exact misdiagnosis this command exists to end.
+            $queued = (int) DB::table('jobs')->whereNull('reserved_at')->count();
             $failed = (int) DB::table('failed_jobs')->count();
         } catch (Throwable $e) {
             $this->line('  <fg=red>the database could not be read</>');
@@ -172,8 +177,19 @@ class DoctorCommand extends Command
             default => "<fg=red>{$age}s ago</>",
         });
 
-        $this->line("  queued jobs    {$queued}");
+        $this->line("  waiting jobs   {$queued}");
         $this->line('  failed jobs    '.($failed > 0 ? "<fg=yellow>{$failed}</>" : '0'));
+
+        // Reported whatever the heartbeat says. A failed job is a thing that
+        // did not happen - a collection sweep that never collected, a stage
+        // that was paid for and lost - and it stays failed while the sweep runs
+        // happily around it. This check used to sit below the healthy-heartbeat
+        // return, so a live studio with a failed job exited 0 and said "Safe to
+        // spend". The owner's own failed job was only ever found because their
+        // heartbeat happened to be stale at the time.
+        if ($failed > 0) {
+            $problems[] = "{$failed} job(s) have failed. Inspect them with `php artisan queue:failed`.";
+        }
 
         if ($age !== null && $age <= 90) {
             return;
@@ -182,12 +198,8 @@ class DoctorCommand extends Command
         // A backlog means the scheduler is producing and nothing is consuming;
         // an empty queue with a stale heartbeat means nothing is producing.
         $problems[] = $queued > 0
-            ? "The sweep is not running: {$queued} job(s) are queued and unconsumed. Start `php artisan queue:work`."
-            : 'The sweep is not running and nothing is queued. Start `php artisan schedule:work` — and keep `queue:work` running, because the sweep is a queued job.';
-
-        if ($failed > 0) {
-            $problems[] = "{$failed} job(s) have failed. Inspect them with `php artisan queue:failed`.";
-        }
+            ? "The sweep is not running: {$queued} job(s) are waiting and unconsumed. Start `php artisan queue:work`."
+            : 'The sweep is not running and nothing is waiting. Start `php artisan schedule:work` — and keep `queue:work` running, because the sweep is a queued job.';
     }
 
     protected function capabilityKey(string $name): string

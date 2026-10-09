@@ -30,8 +30,8 @@ use RuntimeException;
  *
  * What this deliberately does NOT do is invent a cue. The request's description
  * comes from a closed keyword map over the scene's own prose, and a scene with no
- * match never reaches this class. At $0.0194 an effect, the wasteful failure is
- * not an expensive model — it is six confident effects that do not belong in the
+ * match never reaches this class. At $0.002 a second the wasteful failure is not
+ * an expensive model — it is six confident effects that do not belong in the
  * video.
  */
 class FalSoundEffectGenerator implements SoundEffectGenerator
@@ -105,8 +105,10 @@ class FalSoundEffectGenerator implements SoundEffectGenerator
             mime: $this->mimeFor($path),
             model: $model->key,
 
-            // Flat per effect, so the length does not enter into it. The budget
-            // question for SFX is how many scenes carry a cue.
+            // Priced by the SECOND, rounded up to a whole one — owner-verified
+            // against fal's invoice on 2026-10-08. The budget question is how
+            // many scenes carry a cue AND how long each runs; a 22-second
+            // ambience costs seven times a 3-second one.
             costUsd: $model->costForSeconds($request->durationSeconds),
 
             // Measured. The assembler needs the real length to decide how many

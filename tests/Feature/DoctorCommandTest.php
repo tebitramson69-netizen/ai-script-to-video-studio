@@ -10,6 +10,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 /**
@@ -38,6 +39,18 @@ class DoctorCommandTest extends TestCase
     protected function sweptAt(int $secondsAgo): void
     {
         Cache::put(ProgressSnapshot::RECONCILER_HEARTBEAT_KEY, time() - $secondsAgo, now()->addDay());
+    }
+
+    protected function failedJob(): void
+    {
+        DB::table('failed_jobs')->insert([
+            'uuid' => (string) Str::uuid(),
+            'connection' => 'database',
+            'queue' => 'default',
+            'payload' => '{}',
+            'exception' => 'PDOException: SQLSTATE[HY000]: General error: 5 database is locked',
+            'failed_at' => now(),
+        ]);
     }
 
     public function test_a_healthy_studio_passes(): void
@@ -81,6 +94,56 @@ class DoctorCommandTest extends TestCase
         // But the advice must still say the worker is required, because that is
         // the half the old on-page warning left out entirely.
         $this->assertStringContainsString('queue:work', $output);
+    }
+
+    /**
+     * The failed-jobs check used to sit below the healthy-heartbeat early
+     * return, so a running studio with a failed job exited 0 and printed
+     * "All checks passed. Safe to spend." A diagnostic that is confidently
+     * wrong is worse than none.
+     *
+     * The owner's own failed ReconcileProviderRequestsJob — the one carrying
+     * the "database is locked" exception — was found only because their
+     * heartbeat happened to be stale at that moment. With the three windows
+     * running it would have gone quiet.
+     */
+    public function test_a_failed_job_is_a_problem_even_when_the_sweep_is_healthy(): void
+    {
+        $this->sweptAt(5);
+        $this->failedJob();
+
+        $output = $this->run_doctor();
+
+        $this->assertStringContainsString('queue:failed', $output);
+        $this->assertStringNotContainsString('All checks passed', $output);
+
+        $this->artisan('studio:doctor')->assertExitCode(1);
+    }
+
+    /**
+     * A reserved row is a job a worker is running right now. A RenderShotJob
+     * sits reserved for minutes, so counting it meant a DEAD SCHEDULER during
+     * a live render reported as a dead worker — the exact misdiagnosis this
+     * command was built to end.
+     */
+    public function test_a_job_a_worker_is_running_is_not_a_backlog(): void
+    {
+        $this->sweptAt(600);
+
+        DB::table('jobs')->insert([
+            'queue' => 'default',
+            'payload' => '{}',
+            'attempts' => 1,
+            'reserved_at' => time(),
+            'available_at' => time(),
+            'created_at' => time(),
+        ]);
+
+        $output = $this->run_doctor();
+
+        // Nothing is WAITING, so the scheduler is the half that is down.
+        $this->assertStringContainsString('schedule:work', $output);
+        $this->assertStringNotContainsString('are waiting and unconsumed', $output);
     }
 
     public function test_a_sweep_that_has_never_run_is_a_problem(): void

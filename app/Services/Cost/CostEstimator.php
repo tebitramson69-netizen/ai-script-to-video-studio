@@ -191,6 +191,63 @@ class CostEstimator
         return $estimate;
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | Forced regeneration
+    |--------------------------------------------------------------------------
+    |
+    | estimateRemainingRun() answers "what is left to do", and after a finished
+    | run the answer is nothing. That is correct for the progress panel and
+    | wrong for FR-15: a forced regeneration redoes work that already exists, so
+    | gating it on the remaining-run estimate authorises a full re-synthesis it
+    | priced at $0.00.
+    |
+    | These price the forced work instead. They deliberately mirror each job's
+    | own selection rather than the estimator's — the job decides what it will
+    | buy, so the gate has to ask the same question the job will.
+    |
+    */
+
+    /**
+     * Re-voicing every shot that has words. GenerateNarrationJob's
+     * needsSynthesis() returns true for all of them when forced.
+     */
+    public function forcedNarrationUsd(Project $project): float
+    {
+        return array_sum(array_map(
+            fn (string $text) => $this->speech->costForCharacters(mb_strlen($text)),
+            $this->narrationSegments($project),
+        ));
+    }
+
+    /**
+     * One new bed at the current timeline length.
+     */
+    public function forcedMusicUsd(Project $project): float
+    {
+        $seconds = $this->estimatedRuntimeSeconds($project);
+
+        return $seconds > 0 ? $this->music->costForSeconds($seconds) : 0.0;
+    }
+
+    /**
+     * One new effect for every cued scene that has a timeline — which is
+     * GenerateSoundEffectsJob::pendingScenes() with force set, minus the
+     * stillCovered() filter it skips in that mode.
+     */
+    public function forcedSoundEffectsUsd(Project $project): float
+    {
+        return (float) $project->scenes()
+            ->with('shots')
+            ->whereNotNull('sfx_cue')
+            ->where('sfx_cue', '!=', '')
+            ->get()
+            ->filter(fn (Scene $scene) => $scene->timelineDurationSeconds() > 0)
+            ->sum(fn (Scene $scene) => $this->soundEffects->costForSeconds(
+                $scene->timelineDurationSeconds(),
+            ));
+    }
+
     /**
      * Total narration text across the project, in scene order.
      */

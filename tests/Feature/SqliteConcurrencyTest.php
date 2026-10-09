@@ -20,7 +20,13 @@ use Tests\TestCase;
  * "SQLSTATE[HY000]: General error: 5 database is locked" — SQLITE_BUSY, thrown
  * with PDO's 60-second busy timeout already in effect. SQLite skips the busy
  * handler entirely when a read lock tries to upgrade to a write against another
- * writer, which is the sweep's exact shape, so only WAL could have prevented it.
+ * writer, which is the sweep's exact shape, so no timeout could have helped.
+ *
+ * WAL is not a cure for that case either — it returns SQLITE_BUSY_SNAPSHOT
+ * instead, which also bypasses the handler. What WAL fixes is the FREEZE:
+ * readers and writers stop blocking each other, so the page no longer waits on
+ * the pipeline. Claiming more than that would be pinning a story rather than a
+ * behaviour.
  *
  * The suite itself runs on :memory:, which has no journal to set, so asserting
  * on the test connection would prove nothing. These open a real file instead.
@@ -74,15 +80,16 @@ class SqliteConcurrencyTest extends TestCase
     {
         $timeout = DB::connection('sqlite_probe')->select('PRAGMA busy_timeout')[0]->timeout;
 
-        // Lowered from PDO's own 60-second default, which is what this
-        // assertion reports when the config is reverted. This is the lesser of
-        // the two settings: it only covers the writer-against-writer collisions
-        // WAL does not already prevent. A minute of waiting on one of those is
-        // indistinguishable from a hang.
+        // PDO's own default, set explicitly so the value is visible rather
+        // than inherited. It was briefly lowered to 5s; that was a mistake.
+        // WAL had already fixed the freeze, so a shorter wait bought nothing
+        // but a higher chance of a write failing — and AssetRecorder::record()
+        // runs immediately after a paid download, where a failed write means
+        // the provider was paid and the spend was never recorded.
         $this->assertSame(
-            5000,
+            60000,
             (int) $timeout,
-            'PDO defaults to 60s, so a collision looks like a frozen page rather than an error.',
+            'A write failing after a paid generation loses the spend record; waiting does not.',
         );
     }
 }
