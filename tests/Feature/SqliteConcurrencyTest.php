@@ -15,6 +15,13 @@ use Tests\TestCase;
  * froze solid mid-run, and the owner could not tell a hung browser from a hung
  * pipeline while real money was in flight.
  *
+ * Confirmed 2026-10-09 rather than merely argued: studio:doctor surfaced a
+ * failed ReconcileProviderRequestsJob from that window carrying
+ * "SQLSTATE[HY000]: General error: 5 database is locked" — SQLITE_BUSY, thrown
+ * with PDO's 60-second busy timeout already in effect. SQLite skips the busy
+ * handler entirely when a read lock tries to upgrade to a write against another
+ * writer, which is the sweep's exact shape, so only WAL could have prevented it.
+ *
  * The suite itself runs on :memory:, which has no journal to set, so asserting
  * on the test connection would prove nothing. These open a real file instead.
  */
@@ -68,8 +75,10 @@ class SqliteConcurrencyTest extends TestCase
         $timeout = DB::connection('sqlite_probe')->select('PRAGMA busy_timeout')[0]->timeout;
 
         // Lowered from PDO's own 60-second default, which is what this
-        // assertion reports when the config is reverted. A minute of waiting is
-        // indistinguishable from a hang, and that is what the owner saw.
+        // assertion reports when the config is reverted. This is the lesser of
+        // the two settings: it only covers the writer-against-writer collisions
+        // WAL does not already prevent. A minute of waiting on one of those is
+        // indistinguishable from a hang.
         $this->assertSame(
             5000,
             (int) $timeout,

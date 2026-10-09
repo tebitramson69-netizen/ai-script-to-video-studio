@@ -55,17 +55,33 @@ return [
              * pipeline, which is the worst moment for that ambiguity: it was
              * mid-run with real money in flight.
              *
-             * WAL lets readers and writers proceed concurrently, which removes
-             * the contention rather than managing it.
+             * CONFIRMED 2026-10-09. `studio:doctor` surfaced a failed job from
+             * that window — ReconcileProviderRequestsJob, 2026-10-07 03:05:02 —
+             * carrying the exception this setting exists to prevent:
              *
-             * busy_timeout is LOWERED, not introduced: left null, PHP's PDO
-             * SQLite driver applies its own 60-second default, so a blocked
-             * statement waits a full minute before it errors. That is precisely
-             * what the frozen page was doing. With WAL in place a collision can
-             * only be writer-against-writer, and every write here is a short
-             * insert or update — so five seconds is far longer than any of them
-             * needs, and a genuine deadlock surfaces in seconds instead of
-             * looking like a hang.
+             *     SQLSTATE[HY000]: General error: 5 database is locked
+             *
+             * That is SQLITE_BUSY, and it threw with PDO's 60-second busy
+             * timeout ALREADY in effect. Which tells us which of these two
+             * lines actually did the work.
+             *
+             * SQLite returns BUSY without ever invoking the busy handler when a
+             * connection holding a read lock tries to upgrade to a write while
+             * another connection is writing. That is a deadlock rather than
+             * congestion, so waiting cannot resolve it and SQLite refuses at
+             * once. The sweep reads outstanding()
+             * and then writes each result: exactly that shape. No busy timeout
+             * of any length would have saved it.
+             *
+             * So journal_mode is the fix. WAL lets readers and writers proceed
+             * concurrently, which removes the conflict instead of waiting on it.
+             *
+             * busy_timeout is housekeeping, and LOWERED rather than introduced:
+             * null leaves PDO's 60-second default, so the collisions WAL does
+             * not prevent — writer against writer — stall for a minute before
+             * erroring, which is indistinguishable from a hang. Every write here
+             * is a short insert or update, so five seconds is far longer than
+             * any needs and a real deadlock surfaces in seconds.
              *
              * Both are env-overridable because a deployment on MySQL or Postgres
              * never reaches this block, and a filesystem without proper locking
