@@ -825,8 +825,6 @@ return [
     ],
 
     'image' => [
-        'cost_per_image_usd' => (float) env('STUDIO_IMAGE_COST', 0.07),
-
         // How many candidates to generate per character for the owner to
         // choose from before locking one (FR-5).
         'candidates_per_character' => (int) env('STUDIO_IMAGE_CANDIDATES', 3),
