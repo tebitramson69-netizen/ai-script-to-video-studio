@@ -643,11 +643,13 @@ return [
     | scene outruns the ceiling, and the seam stops existing rather than being
     | hidden.
     |
-    | FALSE POSITIVES. The cost question here is not "how long?" but "how many
-    | scenes?", and every scene with a cue is a charge. A cue that should not
-    | have been there is money spent on a sound that does not belong in the
-    | video — worse than no effect at all, because someone has to notice it and
-    | ask for a re-render. Cue detection is therefore a closed keyword map
+    | FALSE POSITIVES. The charge is seconds x rate on every scene carrying a
+    | cue, so length and scene count both decide the bill — but the one a
+    | keyword map can get wrong is whether the scene should have had a cue at
+    | all. A cue that should not have been there is money spent on a sound that
+    | does not belong in the video — worse than no effect at all, because
+    | someone has to notice it and ask for a re-render. Cue detection is
+    | therefore a closed keyword map
     | (HeuristicScriptStructurer::SFX_CUES) and no match means no cue, no
     | request, and no charge.
     |
@@ -820,10 +822,6 @@ return [
         // meant to be noticed only if you listen for it; music carries the mood,
         // and both are ducked under the narration by the same sidechain.
         'sfx_bed_db' => (float) env('STUDIO_SFX_BED_DB', -12.0),
-
-        'tts_cost_per_1k_chars_usd' => (float) env('STUDIO_TTS_COST_PER_1K', 0.08),
-        'music_cost_per_minute_usd' => (float) env('STUDIO_MUSIC_COST_PER_MIN', 0.30),
-        'sfx_cost_per_effect_usd' => (float) env('STUDIO_SFX_COST_PER_EFFECT', 0.02),
     ],
 
     'image' => [

@@ -5,7 +5,6 @@ namespace App\Jobs;
 use App\Contracts\Data\SoundEffectRequest;
 use App\Contracts\SoundEffectGenerator;
 use App\Enums\AssetType;
-use App\Models\Asset;
 use App\Models\Project;
 use App\Models\Scene;
 use App\Services\Cost\CostEstimator;
@@ -109,42 +108,27 @@ class GenerateSoundEffectsJob extends StudioJob
      */
     protected function pendingScenes(Project $project): array
     {
-        $scenes = $project->scenes()
+        return $project->scenes()
             ->with(['shots', 'assets'])
-            ->whereNotNull('sfx_cue')
-            ->where('sfx_cue', '!=', '')
-            ->get();
-
-        return $scenes
-            ->filter(fn (Scene $scene) => $this->sceneDuration($scene) > 0)
-            ->filter(fn (Scene $scene) => $this->force || ! $this->stillCovered($scene))
+            ->cued()
+            ->get()
+            ->filter(fn (Scene $scene) => $scene->hasTimeline())
+            ->filter(fn (Scene $scene) => $this->force || ! $scene->soundEffectIsCurrent())
             ->values()
             ->all();
     }
 
     /**
-     * Does this scene already have an effect worth keeping?
+     * The length this scene's effect is bought for.
      *
-     * Deliberately laxer than the music check, which demands the track match the
-     * timeline within a second. An effect is LOOPED to cover its scene, so a
-     * scene growing by three seconds does not invalidate it — the loop simply
-     * runs a little longer. What does invalidate it is the cue changing, because
-     * then the sound itself is wrong.
+     * No rounding. It used to round to three places, which is invisible on a
+     * flat per-effect rate and is not invisible now that the rate is per second
+     * and billable seconds are rounded UP: a 3.0004s scene priced 4 seconds in
+     * the gate and 3 in the job, because only one of them rounded first.
      */
-    protected function stillCovered(Scene $scene): bool
-    {
-        $effect = $scene->assets->firstWhere('type', AssetType::SoundEffect);
-
-        if (! $effect instanceof Asset || ! $effect->exists()) {
-            return false;
-        }
-
-        return (string) ($effect->meta['description'] ?? '') === (string) $scene->sfx_cue;
-    }
-
     protected function sceneDuration(Scene $scene): float
     {
-        return round($scene->timelineDurationSeconds(), 3);
+        return $scene->timelineDurationSeconds();
     }
 
     public function failed(Throwable $e): void

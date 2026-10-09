@@ -29,9 +29,16 @@ class DoctorCommandTest extends TestCase
 {
     use RefreshDatabase;
 
-    protected function run_doctor(): string
+    /**
+     * Run the command once and assert its exit code, returning its output.
+     *
+     * Artisan::call() returns the exit code, so one run answers both questions.
+     * Asserting the code with a second $this->artisan() call ran the whole
+     * diagnostic twice against state it had already read.
+     */
+    protected function run_doctor(int $expectedExitCode): string
     {
-        Artisan::call('studio:doctor');
+        $this->assertSame($expectedExitCode, Artisan::call('studio:doctor'));
 
         return Artisan::output();
     }
@@ -39,6 +46,38 @@ class DoctorCommandTest extends TestCase
     protected function sweptAt(int $secondsAgo): void
     {
         Cache::put(ProgressSnapshot::RECONCILER_HEARTBEAT_KEY, time() - $secondsAgo, now()->addDay());
+    }
+
+    /**
+     * A row in the queue table, waiting unless $reservedAt says otherwise.
+     *
+     * The column set has to match what the command counts, so it lives in one
+     * place rather than being retyped per test.
+     */
+    protected function queuedJob(?int $reservedAt = null): void
+    {
+        DB::table('jobs')->insert([
+            'queue' => 'default',
+            'payload' => '{}',
+            'attempts' => $reservedAt === null ? 0 : 1,
+            'reserved_at' => $reservedAt,
+            'available_at' => time(),
+            'created_at' => time(),
+        ]);
+    }
+
+    /**
+     * Change studio config and drop the resolved FalClient.
+     *
+     * FalClient is built from config once and held by the container, so a test
+     * that edits the key without forgetting the instance asserts against the
+     * old one and passes for the wrong reason.
+     */
+    protected function reconfigure(array $values): void
+    {
+        config($values);
+
+        $this->app->forgetInstance(FalClient::class);
     }
 
     protected function failedJob(): void
@@ -57,7 +96,7 @@ class DoctorCommandTest extends TestCase
     {
         $this->sweptAt(5);
 
-        $this->artisan('studio:doctor')->assertExitCode(0);
+        $this->assertStringContainsString('All checks passed', $this->run_doctor(0));
     }
 
     public function test_a_backlog_blames_the_worker_not_the_scheduler(): void
@@ -66,27 +105,20 @@ class DoctorCommandTest extends TestCase
 
         // The scheduler is clearly alive — it has queued ten sweeps nobody ran.
         for ($i = 0; $i < 10; $i++) {
-            DB::table('jobs')->insert([
-                'queue' => 'default',
-                'payload' => '{}',
-                'attempts' => 0,
-                'available_at' => time(),
-                'created_at' => time(),
-            ]);
+            $this->queuedJob();
         }
 
-        $output = $this->run_doctor();
+        $output = $this->run_doctor(1);
 
         $this->assertStringContainsString('queue:work', $output);
         $this->assertStringNotContainsString('Start `php artisan schedule:work`', $output);
-        $this->artisan('studio:doctor')->assertExitCode(1);
     }
 
     public function test_an_empty_queue_blames_the_scheduler_and_still_names_the_worker(): void
     {
         $this->sweptAt(600);
 
-        $output = $this->run_doctor();
+        $output = $this->run_doctor(1);
 
         // Nothing is producing sweeps.
         $this->assertStringContainsString('schedule:work', $output);
@@ -112,12 +144,10 @@ class DoctorCommandTest extends TestCase
         $this->sweptAt(5);
         $this->failedJob();
 
-        $output = $this->run_doctor();
+        $output = $this->run_doctor(1);
 
         $this->assertStringContainsString('queue:failed', $output);
         $this->assertStringNotContainsString('All checks passed', $output);
-
-        $this->artisan('studio:doctor')->assertExitCode(1);
     }
 
     /**
@@ -130,16 +160,9 @@ class DoctorCommandTest extends TestCase
     {
         $this->sweptAt(600);
 
-        DB::table('jobs')->insert([
-            'queue' => 'default',
-            'payload' => '{}',
-            'attempts' => 1,
-            'reserved_at' => time(),
-            'available_at' => time(),
-            'created_at' => time(),
-        ]);
+        $this->queuedJob(reservedAt: time());
 
-        $output = $this->run_doctor();
+        $output = $this->run_doctor(1);
 
         // Nothing is WAITING, so the scheduler is the half that is down.
         $this->assertStringContainsString('schedule:work', $output);
@@ -150,22 +173,25 @@ class DoctorCommandTest extends TestCase
     {
         Cache::forget(ProgressSnapshot::RECONCILER_HEARTBEAT_KEY);
 
-        $this->artisan('studio:doctor')->assertExitCode(1);
+        $this->run_doctor(1);
     }
 
-    public function test_a_missing_credential_is_only_a_problem_when_something_uses_fal(): void
+    public function test_a_missing_credential_is_no_problem_while_every_driver_is_fake(): void
     {
         $this->sweptAt(5);
-        config(['studio.fal.key' => '']);
-        $this->app->forgetInstance(FalClient::class);
+        $this->reconfigure(['studio.fal.key' => '']);
 
-        // Every driver is fake under test, so nothing needs the key.
-        $this->artisan('studio:doctor')->assertExitCode(0);
+        // Nothing under test reaches for the key, so demanding one would make
+        // the doctor cry wolf on a machine that is working correctly.
+        $this->run_doctor(0);
+    }
 
-        config(['studio.video_generator' => 'fal']);
-        $this->app->forgetInstance(FalClient::class);
+    public function test_a_missing_credential_is_a_problem_once_a_driver_needs_it(): void
+    {
+        $this->sweptAt(5);
+        $this->reconfigure(['studio.fal.key' => '', 'studio.video_generator' => 'fal']);
 
-        $this->artisan('studio:doctor')->assertExitCode(1);
+        $this->run_doctor(1);
     }
 
     /**
@@ -192,10 +218,9 @@ class DoctorCommandTest extends TestCase
         // This command is what the owner runs WHEN something is wrong, so one
         // broken thing must not hide the rest.
         Cache::forget(ProgressSnapshot::RECONCILER_HEARTBEAT_KEY);
-        config(['studio.fal.key' => '', 'studio.video_generator' => 'fal']);
-        $this->app->forgetInstance(FalClient::class);
+        $this->reconfigure(['studio.fal.key' => '', 'studio.video_generator' => 'fal']);
 
-        $output = $this->run_doctor();
+        $output = $this->run_doctor(1);
 
         $this->assertStringContainsString('FAL_KEY', $output);
         $this->assertStringContainsString('schedule:work', $output);

@@ -75,9 +75,7 @@ class SoundEffectCostTest extends TestCase
 
         $estimate = app(CostEstimator::class)->estimateRemainingRun($project->fresh());
 
-        $effects = collect($estimate->lineItems)
-            ->filter(fn ($_, string $label) => str_starts_with($label, 'Sound effects'))
-            ->first();
+        $effects = $this->costOfStage($estimate, 'Sound effects');
 
         // 6.00 seconds at $0.002, exactly as fal billed it.
         $this->assertEqualsWithDelta(0.012, $effects, 0.000001);
@@ -100,9 +98,7 @@ class SoundEffectCostTest extends TestCase
 
         $estimate = app(CostEstimator::class)->estimateRemainingRun($project->fresh());
 
-        $effects = collect($estimate->lineItems)
-            ->filter(fn ($_, string $label) => str_starts_with($label, 'Sound effects'))
-            ->first();
+        $effects = $this->costOfStage($estimate, 'Sound effects');
 
         $this->assertEqualsWithDelta(0.006, $effects, 0.000001);
     }

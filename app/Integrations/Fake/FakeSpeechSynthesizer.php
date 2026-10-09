@@ -74,13 +74,29 @@ class FakeSpeechSynthesizer implements SpeechSynthesizer
      */
     public function costForCharacters(int $characters): float
     {
-        if ($characters <= 0) {
-            return 0.0;
-        }
+        return $this->capabilities()->costForCharacters($characters);
+    }
 
-        $units = (int) ceil($characters / SpeechModelCapabilities::BILLING_UNIT_CHARACTERS);
-
-        return round($units * $this->costPer1kCharactersUsd(), 6);
+    /**
+     * A capabilities DTO carrying the fake's own rate, so the billing FORMULA
+     * is the real one and only the number is pretend - the pattern
+     * FakeVideoGenerator already uses.
+     *
+     * It used to hand-copy the ceil-to-a-whole-unit expression, importing the
+     * DTO purely to borrow its constant. The rounding rule is the part of this
+     * still marked unverified above 1,000 characters, so it is exactly the part
+     * most likely to be revised - and a copy here would leave the fake, and
+     * the test that asserts the two agree, pinning the old rule.
+     */
+    protected function capabilities(): SpeechModelCapabilities
+    {
+        return new SpeechModelCapabilities(
+            key: 'fake',
+            label: 'Fake narrator (local tone, free)',
+            endpoint: null,
+            endpoints: [],
+            costPer1kCharactersUsd: $this->costPer1kCharactersUsd(),
+        );
     }
 
     public function costPer1kCharactersUsd(): float

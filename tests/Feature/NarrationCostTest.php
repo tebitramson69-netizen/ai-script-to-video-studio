@@ -96,9 +96,7 @@ class NarrationCostTest extends TestCase
 
         $estimate = app(CostEstimator::class)->estimateRemainingRun($project->fresh());
 
-        $narration = collect($estimate->lineItems)
-            ->filter(fn ($_, string $label) => str_starts_with($label, 'Narration'))
-            ->first();
+        $narration = $this->costOfStage($estimate, 'Narration');
 
         // Five requests at $0.02. Summing 155 characters first gives $0.0031,
         // which is what fal's invoice proved wrong.
@@ -121,9 +119,7 @@ class NarrationCostTest extends TestCase
 
         $estimate = app(CostEstimator::class)->estimateRemainingRun($project->fresh());
 
-        $narration = collect($estimate->lineItems)
-            ->filter(fn ($_, string $label) => str_starts_with($label, 'Narration'))
-            ->first();
+        $narration = $this->costOfStage($estimate, 'Narration');
 
         $this->assertEqualsWithDelta(0.02, $narration, 0.0001);
     }

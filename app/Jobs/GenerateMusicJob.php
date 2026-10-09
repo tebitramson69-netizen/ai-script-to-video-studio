@@ -41,9 +41,7 @@ class GenerateMusicJob extends StudioJob
         // Match the music to the timeline the shots actually define, not to the
         // planned lengths — the assembler trims clips to narration (FR-18), so
         // planned totals would buy music that overruns the finished video.
-        $duration = (float) $project->shots()
-            ->get()
-            ->sum(fn ($shot) => $shot->timelineDurationSeconds());
+        $duration = $project->loadMissing('shots')->timelineDurationSeconds();
 
         if ($duration <= 0) {
             return;

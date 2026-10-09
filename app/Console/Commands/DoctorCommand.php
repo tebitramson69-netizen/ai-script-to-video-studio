@@ -33,24 +33,33 @@ class DoctorCommand extends Command
 
     protected $description = 'Check drivers, credential, scheduler heartbeat and queue depth before spending anything';
 
-    /** @var array<string, class-string> */
+    /**
+     * Short name => the interface to resolve and the config key that chooses
+     * its driver.
+     *
+     * Both facts in one row on purpose. They were two parallel lists kept in
+     * step by hand, and the second was a `match` with no default arm — so a
+     * sixth capability added to the first list and forgotten in the second
+     * threw UnhandledMatchError inside the command whose entire job is to keep
+     * working when things are broken.
+     *
+     * @var array<string, array{interface: class-string, driver: string}>
+     */
     protected const CAPABILITIES = [
-        'video' => VideoGenerator::class,
-        'image' => ImageGenerator::class,
-        'speech' => SpeechSynthesizer::class,
-        'music' => MusicGenerator::class,
-        'sfx' => SoundEffectGenerator::class,
+        'video' => ['interface' => VideoGenerator::class, 'driver' => 'video_generator'],
+        'image' => ['interface' => ImageGenerator::class, 'driver' => 'image_generator'],
+        'speech' => ['interface' => SpeechSynthesizer::class, 'driver' => 'speech_synthesizer'],
+        'music' => ['interface' => MusicGenerator::class, 'driver' => 'music_generator'],
+        'sfx' => ['interface' => SoundEffectGenerator::class, 'driver' => 'sound_effect_generator'],
     ];
 
     public function handle(): int
     {
-        $problems = [];
-
-        $this->drivers($problems);
+        $problems = $this->drivers();
         $this->newLine();
-        $this->credential($problems);
+        $problems = [...$problems, ...$this->credential()];
         $this->newLine();
-        $this->collection($problems);
+        $problems = [...$problems, ...$this->collection()];
 
         $this->newLine();
 
@@ -74,17 +83,19 @@ class DoctorCommand extends Command
      * pinned to. A `Fake*` class here is why a run can look free and succeed
      * for the wrong reason.
      *
-     * @param  list<string>  $problems
+     * @return list<string>
      */
-    protected function drivers(array &$problems): void
+    protected function drivers(): array
     {
+        $problems = [];
+
         $this->line('<options=bold>Drivers</>');
 
         $rows = [];
 
-        foreach (self::CAPABILITIES as $name => $interface) {
+        foreach (self::CAPABILITIES as $name => $capability) {
             try {
-                $class = get_class(app($interface));
+                $class = get_class(app($capability['interface']));
             } catch (Throwable $e) {
                 $problems[] = "{$name}: driver will not resolve — ".$e->getMessage();
                 $rows[] = [$name, '<fg=red>unresolvable</>', '—'];
@@ -103,21 +114,26 @@ class DoctorCommand extends Command
         }
 
         $this->table(['capability', 'driver', 'model'], $rows);
+
+        return $problems;
     }
 
     /**
      * Present or missing, never the value. A credential printed to a terminal
      * is a credential in a scrollback buffer, a screenshot and a support thread.
      *
-     * @param  list<string>  $problems
+     * @return list<string>
      */
-    protected function credential(array &$problems): void
+    protected function credential(): array
     {
+        $problems = [];
+
         $this->line('<options=bold>Credential</>');
 
-        $usesFal = collect(self::CAPABILITIES)
-            ->keys()
-            ->contains(fn (string $name) => config("studio.{$this->capabilityKey($name)}") === 'fal');
+        $usesFal = in_array('fal', array_map(
+            fn (array $capability) => config("studio.{$capability['driver']}"),
+            self::CAPABILITIES,
+        ), true);
 
         $hasKey = app(FalClient::class)->hasKey();
 
@@ -129,6 +145,8 @@ class DoctorCommand extends Command
         } else {
             $this->line('  FAL_KEY <fg=yellow>missing</> (no capability uses fal, so nothing needs it)');
         }
+
+        return $problems;
     }
 
     /**
@@ -140,10 +158,12 @@ class DoctorCommand extends Command
      * it. Either one alone leaves the heartbeat stale, which is why this reports
      * the queue depth beside it — a backlog says which half is missing.
      *
-     * @param  list<string>  $problems
+     * @return list<string>
      */
-    protected function collection(array &$problems): void
+    protected function collection(): array
     {
+        $problems = [];
+
         $this->line('<options=bold>Collection</>');
 
         // Every read here is wrapped, because this command is what the owner
@@ -166,14 +186,20 @@ class DoctorCommand extends Command
             $problems[] = 'The database is unreachable, so nothing about collection can be checked — '.
                 'and no stage of the pipeline can run either. Check DB_DATABASE and that migrations have run.';
 
-            return;
+            return $problems;
         }
 
         $age = is_numeric($lastRun) ? time() - (int) $lastRun : null;
 
+        // ProgressSnapshot's threshold, not one of our own. The page renders
+        // that same constant as "no sweep in the last 5 minutes"; a second
+        // number here meant a two-minute-old heartbeat read healthy on the page
+        // and broken in this command, which is the misdiagnosis it exists to end.
+        $healthy = $age !== null && $age <= ProgressSnapshot::RECONCILER_STALE_AFTER_SECONDS;
+
         $this->line('  last sweep     '.match (true) {
             $age === null => '<fg=red>never</>',
-            $age <= 90 => "<fg=green>{$age}s ago</>",
+            $healthy => "<fg=green>{$age}s ago</>",
             default => "<fg=red>{$age}s ago</>",
         });
 
@@ -191,8 +217,8 @@ class DoctorCommand extends Command
             $problems[] = "{$failed} job(s) have failed. Inspect them with `php artisan queue:failed`.";
         }
 
-        if ($age !== null && $age <= 90) {
-            return;
+        if ($healthy) {
+            return $problems;
         }
 
         // A backlog means the scheduler is producing and nothing is consuming;
@@ -200,16 +226,7 @@ class DoctorCommand extends Command
         $problems[] = $queued > 0
             ? "The sweep is not running: {$queued} job(s) are waiting and unconsumed. Start `php artisan queue:work`."
             : 'The sweep is not running and nothing is waiting. Start `php artisan schedule:work` — and keep `queue:work` running, because the sweep is a queued job.';
-    }
 
-    protected function capabilityKey(string $name): string
-    {
-        return match ($name) {
-            'video' => 'video_generator',
-            'image' => 'image_generator',
-            'speech' => 'speech_synthesizer',
-            'music' => 'music_generator',
-            'sfx' => 'sound_effect_generator',
-        };
+        return $problems;
     }
 }

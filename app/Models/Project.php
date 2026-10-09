@@ -80,6 +80,20 @@ class Project extends Model
         return $this->belongsTo(Asset::class, 'final_asset_id');
     }
 
+    /**
+     * How long the finished video runs.
+     *
+     * The sum of its shots' timeline durations (FR-18), beside the identical
+     * per-scene and per-shot methods. Three callers were each summing this
+     * themselves - GenerateMusicJob sizing the bed, and two cost figures on the
+     * project page - which is three chances for the music to be sized against a
+     * different timeline than the one the owner is quoted.
+     */
+    public function timelineDurationSeconds(): float
+    {
+        return (float) $this->shots->sum(fn (Shot $shot) => $shot->timelineDurationSeconds());
+    }
+
     public function narrationAsset(): ?Asset
     {
         return $this->assets()->where('type', AssetType::NarrationTrack)->latest('id')->first();

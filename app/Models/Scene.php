@@ -3,6 +3,8 @@
 namespace App\Models;
 
 use App\Enums\AssetType;
+use Illuminate\Database\Eloquent\Attributes\Scope;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -51,6 +53,54 @@ class Scene extends Model
     public function soundEffectAsset(): ?Asset
     {
         return $this->assets()->where('type', AssetType::SoundEffect)->latest('id')->first();
+    }
+
+    /**
+     * Scenes the structurer heard ambience in.
+     *
+     * One definition, because three places need it and they must agree: the job
+     * that buys the effects, the estimate that prices what is left, and the gate
+     * on a forced regeneration. They were written out separately and had already
+     * drifted.
+     */
+    #[Scope]
+    protected function cued(Builder $query): void
+    {
+        $query->whereNotNull('sfx_cue')->where('sfx_cue', '!=', '');
+    }
+
+    /**
+     * Does this scene occupy any of the finished timeline?
+     *
+     * A cued scene with no shots buys nothing, so pricing one would gate a run
+     * on money that is never spent.
+     */
+    public function hasTimeline(): bool
+    {
+        return $this->timelineDurationSeconds() > 0;
+    }
+
+    /**
+     * Does this scene already have an effect worth keeping?
+     *
+     * Deliberately laxer than the music check, which demands the track match the
+     * timeline within a second. An effect is LOOPED to cover its scene, so a
+     * scene growing by three seconds does not invalidate it — the loop simply
+     * runs a little longer. What does invalidate it is the cue changing, because
+     * then the sound itself is wrong.
+     *
+     * Reads the loaded relation rather than querying, so a caller that eager
+     * loads `assets` pays nothing per scene.
+     */
+    public function soundEffectIsCurrent(): bool
+    {
+        $effect = $this->assets->firstWhere('type', AssetType::SoundEffect);
+
+        if (! $effect instanceof Asset || ! $effect->exists()) {
+            return false;
+        }
+
+        return (string) ($effect->meta['description'] ?? '') === (string) $this->sfx_cue;
     }
 
     /**

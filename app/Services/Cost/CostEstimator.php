@@ -7,7 +7,6 @@ use App\Contracts\ImageGenerator;
 use App\Contracts\MusicGenerator;
 use App\Contracts\SoundEffectGenerator;
 use App\Contracts\SpeechSynthesizer;
-use App\Enums\AssetType;
 use App\Enums\ShotStatus;
 use App\Exceptions\BudgetExceededException;
 use App\Models\Project;
@@ -15,6 +14,7 @@ use App\Models\Scene;
 use App\Models\Shot;
 use App\Services\Provider\ModelRegistry;
 use App\Services\Timing\NarrationEstimator;
+use Illuminate\Support\Collection;
 
 /**
  * Estimates what a run will cost, and enforces the hard per-project cap
@@ -123,28 +123,15 @@ class CostEstimator
         // Counting every scene would inflate the estimate on a script the
         // structurer found no ambience in — which is most of them — and an
         // estimate that is routinely too high is one the owner learns to ignore.
-        $pendingEffects = $project->scenes()
-            ->with('shots')
-            ->whereNotNull('sfx_cue')
-            ->where('sfx_cue', '!=', '')
-            ->whereDoesntHave('assets', fn ($q) => $q->where('type', AssetType::SoundEffect))
-            ->get()
-            // GenerateSoundEffectsJob skips a scene with no timeline, so an
-            // estimate that charged for one would gate on money never spent.
-            ->filter(fn (Scene $scene) => $scene->timelineDurationSeconds() > 0);
+        // Outstanding only: a scene whose effect still matches its cue is not
+        // re-bought. This used to ask whether the scene had ANY effect asset,
+        // while the job asks whether the one it has still matches the cue - so
+        // an edited cue was bought by the job and priced at $0.00 here.
+        $pendingEffects = $this->cuedScenes($project, outstandingOnly: true);
 
         if ($pendingEffects->isNotEmpty()) {
-            // Priced at each scene's own length, because fal bills this
-            // endpoint in seconds: a 3-second ambience and a 22-second one
-            // differ by 7x. Counting scenes and multiplying by a flat rate
-            // over-charges the short ones and under-charges the long ones,
-            // and only the second of those is dangerous.
             $lineItems[sprintf('Sound effects (%d scene(s))', $pendingEffects->count())] =
-                $pendingEffects->sum(
-                    fn (Scene $scene) => $this->soundEffects->costForSeconds(
-                        $scene->timelineDurationSeconds(),
-                    ),
-                );
+                $this->soundEffectsUsd($pendingEffects);
         }
 
         return new CostEstimate(
@@ -237,21 +224,44 @@ class CostEstimator
      */
     public function forcedSoundEffectsUsd(Project $project): float
     {
-        return (float) $project->scenes()
-            ->with('shots')
-            ->whereNotNull('sfx_cue')
-            ->where('sfx_cue', '!=', '')
+        return $this->soundEffectsUsd($this->cuedScenes($project, outstandingOnly: false));
+    }
+
+    /**
+     * The scenes a sound-effect run will buy for, forced or not.
+     *
+     * Mirrors GenerateSoundEffectsJob::pendingScenes() through the same three
+     * Scene methods it uses, so the gate and the job cannot answer differently.
+     *
+     * @return Collection<int, Scene>
+     */
+    protected function cuedScenes(Project $project, bool $outstandingOnly): Collection
+    {
+        return $project->scenes()
+            ->with(['shots', 'assets'])
+            ->cued()
             ->get()
-            ->filter(fn (Scene $scene) => $scene->timelineDurationSeconds() > 0)
-            ->sum(fn (Scene $scene) => $this->soundEffects->costForSeconds(
-                $scene->timelineDurationSeconds(),
-            ));
+            ->filter(fn (Scene $scene) => $scene->hasTimeline())
+            ->filter(fn (Scene $scene) => ! $outstandingOnly || ! $scene->soundEffectIsCurrent());
+    }
+
+    /**
+     * Priced at each scene's own length, because fal bills this endpoint in
+     * seconds: a 3-second ambience and a 22-second one differ by 7x.
+     *
+     * @param  Collection<int, Scene>  $scenes
+     */
+    protected function soundEffectsUsd(Collection $scenes): float
+    {
+        return (float) $scenes->sum(
+            fn (Scene $scene) => $this->soundEffects->costForSeconds($scene->timelineDurationSeconds()),
+        );
     }
 
     /**
      * Total narration text across the project, in scene order.
      */
-    public function narrationText(Project $project): string
+    protected function narrationText(Project $project): string
     {
         return trim(implode(' ', $project->scenes()->pluck('narration')->all()));
     }
@@ -303,8 +313,11 @@ class CostEstimator
      */
     public function estimatedRuntimeSeconds(Project $project): float
     {
-        $planned = (float) $project->shots()->get()
-            ->sum(fn (Shot $shot) => $shot->timelineDurationSeconds());
+        // loadMissing, not shots(): ProjectController::show() has already eager
+        // loaded this relation, and going through the builder re-queried and
+        // re-hydrated every Shot - three times per render once the surplus row
+        // was added, for rows already sitting in memory.
+        $planned = $project->loadMissing('shots')->timelineDurationSeconds();
 
         if ($planned > 0) {
             return $planned;
@@ -325,12 +338,10 @@ class CostEstimator
      */
     public function trimmedSurplusSeconds(Project $project): float
     {
-        $shots = $project->shots()->get();
-
-        $bought = (float) $shots->sum('target_duration_seconds');
-        $used = (float) $shots->sum(fn (Shot $shot) => $shot->timelineDurationSeconds());
-
-        return round(max(0.0, $bought - $used), 2);
+        return round(
+            $project->loadMissing('shots')->shots->sum(fn (Shot $shot) => $shot->slackSeconds()),
+            2,
+        );
     }
 
     /**

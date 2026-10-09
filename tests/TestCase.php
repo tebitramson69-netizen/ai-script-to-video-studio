@@ -2,6 +2,7 @@
 
 namespace Tests;
 
+use App\Services\Cost\CostEstimate;
 use App\Services\Provider\DownloadUrlGuard;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 use Illuminate\Support\Facades\Http;
@@ -31,5 +32,25 @@ abstract class TestCase extends BaseTestCase
             // wants a refusal says so explicitly with its own resolver.
             fn (string $host) => ['93.184.216.34'],
         ));
+    }
+
+    /**
+     * What one stage costs in an estimate, found by the start of its label.
+     *
+     * Every line-item label carries its own detail — "Narration (5 request(s))",
+     * "Sound effects (2 scene(s))", "Music (11.6s)" — so a test that wants the
+     * number would otherwise have to spell the wording out and break whenever
+     * the panel's phrasing changes. Returns null when the stage contributes no
+     * line at all, which is a different assertion from costing $0.00.
+     */
+    protected function costOfStage(CostEstimate $estimate, string $labelPrefix): ?float
+    {
+        foreach ($estimate->lineItems as $label => $usd) {
+            if (str_starts_with($label, $labelPrefix)) {
+                return $usd;
+            }
+        }
+
+        return null;
     }
 }

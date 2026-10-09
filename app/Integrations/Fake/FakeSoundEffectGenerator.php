@@ -3,6 +3,7 @@
 namespace App\Integrations\Fake;
 
 use App\Contracts\Data\GeneratedMedia;
+use App\Contracts\Data\SoundEffectModelCapabilities;
 use App\Contracts\Data\SoundEffectRequest;
 use App\Contracts\ProviderException;
 use App\Contracts\SoundEffectGenerator;
@@ -50,14 +51,24 @@ class FakeSoundEffectGenerator implements SoundEffectGenerator
      */
     public function costForSeconds(float $seconds): float
     {
-        if ($seconds <= 0.0) {
-            return 0.0;
-        }
+        return $this->capabilities()->costForSeconds($seconds);
+    }
 
-        return round(
-            $this->costPerEffectUsd() + (ceil($seconds) * $this->costPerSecondUsd()),
-            6,
-        );
+    /**
+     * As with the fake narrator: the real formula, a pretend rate.
+     *
+     * The hand-copied version also dropped clampDuration(), so for a scene past
+     * the model's ceiling the fake and the rule it claims to imitate already
+     * disagreed - in a class whose comment promises it bills exactly as the
+     * provider does.
+     */
+    protected function capabilities(): SoundEffectModelCapabilities
+    {
+        return SoundEffectModelCapabilities::fromConfig('fake', [
+            ...(array) config('studio.sfx_models.fake', []),
+            'cost_per_effect_usd' => $this->costPerEffectUsd(),
+            'cost_per_second_usd' => $this->costPerSecondUsd(),
+        ]);
     }
 
     public function costPerEffectUsd(): float

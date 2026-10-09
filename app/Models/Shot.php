@@ -78,6 +78,21 @@ class Shot extends Model
         return (float) ($this->narration_duration_seconds ?: $this->target_duration_seconds);
     }
 
+    /**
+     * Seconds of clip bought beyond what this shot's narration needs, and
+     * therefore trimmed off at assembly (FR-18).
+     *
+     * Mirrors ShotPlan::slackSeconds() on the persisted row. Clamped at zero per
+     * shot, which is the whole point: measured narration can OVERRUN its target,
+     * because the target was rounded up from an estimate. Netting an overrun
+     * against another shot's surplus understates the money actually spent on
+     * frames nobody sees - the one thing the figure exists to show.
+     */
+    public function slackSeconds(): float
+    {
+        return round(max(0.0, (float) $this->target_duration_seconds - $this->timelineDurationSeconds()), 2);
+    }
+
     public function isRendered(): bool
     {
         return $this->status === ShotStatus::Rendered;
