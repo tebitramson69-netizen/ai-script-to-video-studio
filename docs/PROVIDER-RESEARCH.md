@@ -425,6 +425,13 @@ Our reference case, from PRD §13: a 60-second narrated folk tale — 8 scenes �
 ~8s = **64 seconds of clip**, 3 character reference images, ~900 characters of
 narration, 1 minute of music.
 
+> **Superseded. Read §5a below first.** This whole section predates having an
+> account, and two of its premises are now known to be wrong: the rate is
+> settled at $0.07/s, and **an 8-second clip does not exist on Kling** — its
+> ladder is `[5, 10]`, so this reference case cannot be rendered as described.
+> The numbers below are kept because the reasoning about pricing *models* still
+> holds.
+
 | Line item | Basis | Cost |
 |---|---|---|
 | Video, Kling 3.0 | 64s × $0.07/s **[Corroborated]** | **$4.48** |
@@ -450,6 +457,85 @@ end of this range, which is the right place for an estimate to sit.
 Not in any of these numbers: **your bank's FX spread and foreign-transaction
 fee.** Measure them on the first real charge and fold them into the config
 constants.
+
+---
+
+## 5a. Measured, 10 Oct 2026 — what actually drives the bill
+
+Tier A: run through the real `HeuristicScriptStructurer`, `SceneSplitter` and
+`ShotPlanner` against Kling's real `[5, 10]` ladder and the invoice-corrected
+rates. No provider call, so this costs nothing and can be re-run on any draft
+before a project exists.
+
+The same thirteen sentences — one minute of narration — written three ways:
+
+| | A: one sentence per scene | B: half-sentences per scene | C: natural paragraphs of three |
+| --- | --- | --- | --- |
+| scenes / shots | 13 / 13 | 26 / 26 | **5 / 9** |
+| narration total | 59.54s | 61.88s | 59.54s |
+| clip bought | 65.00s | **130.00s** | 65.00s |
+| trimmed surplus (FR-18) | 5.46s | **68.12s** | 5.46s |
+| video | $4.5500 | **$9.1000** | $4.5500 |
+| speech | $0.2600 | $0.5200 | $0.1800 |
+| music | $0.0376 | $0.0376 | $0.0376 |
+| sound effects | $0.0600 | $0.0420 | $0.1120 |
+| **total** | **$4.9076** | **$9.6996** | **$4.8796** |
+
+B's narration is 2.34s longer than A's for the same words: splitting thirteen
+sentences in half adds thirteen full stops, and `NarrationEstimator` charges
+0.18s a mark. The estimator is `words x 0.4 + marks x 0.18`.
+
+### The lever is a half-empty shot, not a long sentence
+
+**A and C buy identical video — 65.00s, to the hundredth.** That is the result
+worth internalising. `ShotPlanner::splitToFit()` packs a scene's sentences into
+segments of at most 10s, so thirteen sentences cost the same clip total whether
+the writer makes thirteen scenes or five paragraphs. Scene count is not a cost
+lever and neither is sentence length.
+
+What doubled B was that every 2.3s half-sentence became **its own shot**, and
+`roundUpToSupported()` never rounds down — so each one bought a 5s clip to carry
+2.3s of voice and threw away 54% of it. Waste is per shot:
+`clip - narration`, summed.
+
+So the guidance is one line: **do not write one-line scenes.** A sentence of
+~4.6s either fills a 5s clip or pairs into a 10s one; a sentence of ~2.3s alone
+in a scene wastes half of whatever clip it gets. The structurer's defaults
+already do the right thing — `TARGET_WORDS_PER_SCENE` of 35 is ~14s of
+narration, which splits to 10s + 5s with 1.26s of slack. **A writer who just
+writes prose gets near-optimal packing for free.** The only way to lose money
+here is to over-split: a slug line or a blank line between every sentence.
+
+This is a $4.79 swing on one minute of finished video, which is more than the
+difference between any two models in this document.
+
+### Two billing units pull in opposite directions
+
+Both are small, both are structural, and neither is worth changing:
+
+- **Speech rewards fewer requests.** Narration is one call per shot, billed per
+  request rounded up to 1000 characters. C's nine shots cost $0.18 where A's
+  thirteen cost $0.26, on ~700 characters of actual text — billed as one call it
+  would be $0.02. Per-shot narration is deliberate: it is what gives the
+  assembler segment boundaries to trim against (FR-18). You pay ~$0.24 of
+  rounding for a trim that saves $0.38 of clip.
+- **Sound effects reward shorter scenes.** One effect covers a whole scene, sized
+  from `Scene::timelineDurationSeconds()` and billed per second rounded up. C's
+  13.74s scenes cost $0.028 of ambience each against A's $0.010, which is why C
+  is dearer on SFX than A despite being cheaper overall.
+
+There is a quality argument here that cost does not capture, and it favours A:
+only the best-scoring cue per scene survives, so C buys four long effects where
+A buys six short ones. A 13.7s scene spanning a river, cooking smoke and a
+market gets one ambience for all three.
+
+### The practical consequence
+
+A 60-second video on these rates is **~$4.88 written sensibly and ~$9.70
+written as one-line scenes.** Against a $7.40 balance the first fits with $2.49
+to spare and the second cannot be afforded at all. Measure any draft with the
+planner before creating the project — it is free, and it is the only number that
+tells you whether the script you have written is the script you can pay for.
 
 ---
 

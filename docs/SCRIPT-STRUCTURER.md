@@ -131,6 +131,13 @@ Applied in order. Earlier rules win.
    long final scene is handled downstream, because `ShotPlanner` splits a scene
    across several shots anyway (FR-17).
 
+**Rule 3 is also the one with money attached.** A writer who puts a blank line
+between every single sentence gets a scene — and therefore a shot — per
+sentence, each buying a clip rounded up to the model's ladder. Measured against
+Kling, that doubles the video bill for the same narration; the defaults above do
+not. The numbers are in `docs/PROVIDER-RESEARCH.md` §5a, which is the one place
+they live.
+
 ## 4. Dialogue handling
 
 A line of the form `NAME:` or `NAME —` followed by speech is a **dialogue cue**.
