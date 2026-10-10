@@ -113,7 +113,11 @@ class GenerateSoundEffectsJob extends StudioJob
             ->cued()
             ->get()
             ->filter(fn (Scene $scene) => $scene->hasTimeline())
-            ->filter(fn (Scene $scene) => $this->force || ! $scene->soundEffectIsCurrent())
+            // `force` is spent on the first attempt only — a retry after a
+            // mid-batch provider failure must not re-buy the effects the
+            // earlier attempt already paid for (StudioJob::isFirstAttempt()).
+            ->filter(fn (Scene $scene) => ($this->force && $this->isFirstAttempt())
+                || ! $scene->soundEffectIsCurrent())
             ->values()
             ->all();
     }

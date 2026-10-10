@@ -51,7 +51,11 @@ class GenerateMusicJob extends StudioJob
 
         // NFR-3: a track that already covers this timeline is not worth paying
         // for twice. A second press of the audio button must cost nothing.
-        if (! $this->force && $existing !== null && $this->stillFits($existing, $duration)) {
+        // `force` is spent on the first attempt only (StudioJob::isFirstAttempt()),
+        // so a retry keeps the bed the earlier attempt already paid for.
+        if (! ($this->force && $this->isFirstAttempt())
+            && $existing !== null
+            && $this->stillFits($existing, $duration)) {
             return;
         }
 

@@ -82,7 +82,7 @@ class GenerateNarrationJob extends StudioJob
 
         // Past the cap, so the old audio can go. Nothing between the assertion
         // and here spends or destroys anything.
-        if ($this->force) {
+        if ($this->forcing()) {
             $this->discardExistingAudio($project, $shots);
         }
 
@@ -172,13 +172,26 @@ class GenerateNarrationJob extends StudioJob
     }
 
     /**
+     * Is this run discarding and re-synthesising everything?
+     *
+     * One method rather than two reads of `force`, because the discard and the
+     * stale filter MUST agree: a run that discarded but did not re-select would
+     * delete the audio and generate nothing. See StudioJob::isFirstAttempt()
+     * for why a retry stops forcing.
+     */
+    protected function forcing(): bool
+    {
+        return $this->force && $this->isFirstAttempt();
+    }
+
+    /**
      * A shot needs synthesis when it has no narration audio at all, when the
      * stored file has gone missing, or when its text no longer matches what was
      * spoken — which is exactly what happens after the owner edits a scene.
      */
     protected function needsSynthesis(Shot $shot): bool
     {
-        if ($this->force) {
+        if ($this->forcing()) {
             return true;
         }
 

@@ -47,6 +47,29 @@ abstract class StudioJob implements ShouldQueue
     }
 
     /**
+     * Whether this is the job's first attempt.
+     *
+     * $tries is 4, and a retried job is rebuilt from its constructor arguments
+     * — so a `force` flag meaning "discard what exists and buy it again"
+     * survives into every retry. A forced audio run that failed after paying
+     * for three of five segments would, on attempt 2, delete those three and
+     * buy them a second time. Four attempts, four bills, one click.
+     *
+     * The owner asked for one regeneration, not one per attempt. From attempt 2
+     * the ordinary "only what is missing or has changed" rule is both correct
+     * and cheaper, and it still finishes the work the owner asked for.
+     *
+     * attempts() returns 0 when no queue job backs this instance — a
+     * synchronous dispatch, or a test calling handle() directly — which reads
+     * as the first attempt. That is the safe default: it preserves the
+     * behaviour the owner explicitly asked for.
+     */
+    protected function isFirstAttempt(): bool
+    {
+        return $this->attempts() <= 1;
+    }
+
+    /**
      * A provider that told us the failure is permanent should not be retried —
      * a rejected prompt will be rejected identically four times, and on a real
      * provider each attempt may still be billed.

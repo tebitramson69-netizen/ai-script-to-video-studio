@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Exceptions\BudgetExceededException;
+use App\Exceptions\ShotInFlightException;
 use App\Models\Project;
 use App\Models\Shot;
 use App\Services\Pipeline\PipelineRunner;
@@ -31,6 +32,8 @@ class ShotController extends Controller
         try {
             $this->runner->regenerateShot($project, $shot, $prompt);
         } catch (BudgetExceededException $e) {
+            return back()->with('budget_error', $e->getMessage());
+        } catch (ShotInFlightException $e) {
             return back()->with('budget_error', $e->getMessage());
         }
 

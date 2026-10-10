@@ -2,10 +2,14 @@
 
 namespace Tests\Feature;
 
+use App\Contracts\MusicGenerator;
+use App\Contracts\SoundEffectGenerator;
 use App\Contracts\SpeechSynthesizer;
 use App\Enums\AssetType;
 use App\Exceptions\BudgetExceededException;
+use App\Jobs\GenerateMusicJob;
 use App\Jobs\GenerateNarrationJob;
+use App\Jobs\GenerateSoundEffectsJob;
 use App\Models\Project;
 use App\Models\Scene;
 use App\Models\Shot;
@@ -13,6 +17,7 @@ use App\Services\Cost\CostEstimator;
 use App\Services\Media\FfmpegRunner;
 use App\Services\Pipeline\AssetRecorder;
 use App\Services\Pipeline\PipelineRunner;
+use Illuminate\Contracts\Queue\Job;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
@@ -175,6 +180,116 @@ class RegenerationBudgetTest extends TestCase
         $this->assertSame($statusBefore, $shot->status);
         $this->assertSame($seedBefore, $shot->seed);
         $this->assertSame('a riverbank at dawn', $shot->prompt);
+    }
+
+    /**
+     * A forced run is forced ONCE, not once per attempt.
+     *
+     * StudioJob::$tries is 4 and a retried job is rebuilt from its constructor
+     * arguments, so `force` survives into every retry. A forced narration run
+     * that died after paying for one of two segments would, on attempt 2,
+     * discard that segment and buy it again — four attempts, four bills, for
+     * one click.
+     */
+    public function test_a_retried_forced_narration_run_keeps_what_the_first_attempt_bought(): void
+    {
+        $project = $this->projectWithNarration();
+
+        $assetIds = $project->shots->pluck('narration_asset_id')->filter()->values();
+        $spentBefore = $project->spentUsd();
+        $this->assertCount(2, $assetIds, 'Setup failed: the shots have no narration to lose.');
+
+        $job = new GenerateNarrationJob($project->getKey(), force: true);
+        $this->asAttempt($job, 2);
+
+        $job->handle(
+            app(SpeechSynthesizer::class),
+            app(AssetRecorder::class),
+            app(CostEstimator::class),
+            app(FfmpegRunner::class),
+        );
+
+        // The text has not changed, so attempt 2 has nothing to synthesise and
+        // nothing to pay for.
+        foreach ($assetIds as $id) {
+            $this->assertDatabaseHas('assets', ['id' => $id]);
+        }
+
+        $this->assertEqualsWithDelta(
+            $spentBefore,
+            $project->fresh()->spentUsd(),
+            0.0001,
+            'A retry of a forced run re-bought narration the first attempt had already paid for.',
+        );
+    }
+
+    public function test_a_retried_forced_music_run_keeps_the_bed_it_already_bought(): void
+    {
+        config(['studio.fake_costs.music_per_minute_usd' => 5.00]);
+
+        $project = $this->projectWithNarration();
+        $spentBefore = $project->spentUsd();
+
+        $job = new GenerateMusicJob($project->getKey(), force: true);
+        $this->asAttempt($job, 2);
+
+        $job->handle(
+            app(MusicGenerator::class),
+            app(AssetRecorder::class),
+            app(CostEstimator::class),
+        );
+
+        $this->assertEqualsWithDelta(
+            $spentBefore,
+            $project->fresh()->spentUsd(),
+            0.0001,
+            'A retry of a forced run re-bought a music bed that still fits the timeline.',
+        );
+    }
+
+    public function test_a_retried_forced_sound_effect_run_keeps_the_effects_it_already_bought(): void
+    {
+        config(['studio.fake_costs.sfx_per_second_usd' => 0.50]);
+
+        $project = $this->projectWithNarration(cue: 'a flowing river with birdsong');
+        $spentBefore = $project->spentUsd();
+
+        $this->assertNotNull(
+            $project->scenes()->first()->assets()->where('type', AssetType::SoundEffect)->first(),
+            'Setup failed: the scene has no effect to re-buy.',
+        );
+
+        $job = new GenerateSoundEffectsJob($project->getKey(), force: true);
+        $this->asAttempt($job, 2);
+
+        $job->handle(
+            app(SoundEffectGenerator::class),
+            app(AssetRecorder::class),
+            app(CostEstimator::class),
+        );
+
+        $this->assertEqualsWithDelta(
+            $spentBefore,
+            $project->fresh()->spentUsd(),
+            0.0001,
+            'A retry of a forced run re-bought a sound effect that was already current.',
+        );
+    }
+
+    /**
+     * Put a job on a given queue attempt.
+     *
+     * attempts() reads through to the underlying queue job, which is absent
+     * when handle() is called directly — and absent reads as attempt 1. These
+     * tests need attempt 2, so they supply one.
+     */
+    protected function asAttempt(object $job, int $attempt): void
+    {
+        $queueJob = \Mockery::mock(Job::class);
+        $queueJob->shouldReceive('attempts')->andReturn($attempt);
+        $queueJob->shouldIgnoreMissing();
+
+        $job->setJob($queueJob);
     }
 
     /**

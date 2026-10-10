@@ -4,6 +4,7 @@ namespace App\Services\Pipeline;
 
 use App\Enums\ShotStatus;
 use App\Exceptions\BudgetExceededException;
+use App\Exceptions\ShotInFlightException;
 use App\Jobs\AssembleProjectJob;
 use App\Jobs\FinalizeAudioJob;
 use App\Jobs\GenerateCharacterCandidatesJob;
@@ -90,14 +91,31 @@ class PipelineRunner
      */
     public function regenerateShot(Project $project, Shot $shot, ?string $newPrompt = null): void
     {
+        // Refused before the cap is even consulted, because this one is not
+        // about affording the work - it is about buying it twice. The reseed
+        // below changes the generation fingerprint, so the ledger stops
+        // recognising the outstanding request as the same work and lets a
+        // second submit through.
+        if (in_array($shot->status, [ShotStatus::Queued, ShotStatus::Rendering], true)) {
+            throw new ShotInFlightException($shot);
+        }
+
         // Checked before anything is touched. The charge does not depend on the
         // prompt or the seed, so there is no reason to mutate the shot first -
         // and doing so left a refused regeneration with its clip invalidated,
         // its seed re-rolled and no replacement coming.
+        //
+        // Priced at THIS SHOT's model, not the project's primary. With per-shot
+        // selection a character shot renders on the companion model, and
+        // RenderShotJob charges estimateCostUsd() against the request - so
+        // pricing the gate at the primary's rate gated a $0.20/s shot at
+        // $0.07/s, waved it through, and left the clip invalidated when the job
+        // then refused. estimateRemainingRun() already groups by shot model for
+        // exactly this reason; this call site was missed.
         $this->costs->assertCanSpend(
             $project,
             (float) $shot->target_duration_seconds
-                * app(ModelRegistry::class)->forProject($project)->costPerSecondUsd(),
+                * app(ModelRegistry::class)->forShot($shot)->costPerSecondUsd(),
             "Shot #{$shot->sequence}",
         );
 
