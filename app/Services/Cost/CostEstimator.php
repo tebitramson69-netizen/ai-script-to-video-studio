@@ -57,10 +57,22 @@ class CostEstimator
         // Using the bound driver's rate instead of the planned model's would be
         // worse again: a zero-cost local fake would wave an unaffordable run
         // straight past the cap.
+        // Rendering is included, and that is the whole point of listing these
+        // explicitly rather than reusing needingRender(). A submitted clip has
+        // been billed by the provider, but usage_records are only written when
+        // AssetRecorder lands the asset - so between submit and collection the
+        // spend is in neither the estimate nor spentUsd(), and every cap check
+        // is blind to it. On a 13-shot run that is $4.55 the cap cannot see.
+        //
+        // The handover stays clean: while Rendering it is estimated and not
+        // spent, once Rendered it is spent and not estimated (Rendered is in
+        // neither list). renderShots() selects needingRender() separately, so
+        // nothing here can cause a re-render.
         $pending = $project->shots()
             ->whereIn('status', [
                 ...ShotStatus::needingRenderValues(),
                 ShotStatus::Queued->value,
+                ShotStatus::Rendering->value,
             ])
             ->selectRaw('model, sum(target_duration_seconds) as seconds')
             ->groupBy('model')

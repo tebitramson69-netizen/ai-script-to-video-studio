@@ -60,12 +60,16 @@ class FalClient
      */
     protected const SHAPE_MISMATCH_STATUSES = [404, 405];
 
+    /** Pause between attempts. Negligible next to the timeout, but counted. */
+    public const RETRY_SLEEP_MS = 500;
+
     public function __construct(
         protected string $apiKey,
         protected string $queueUrl,
         protected FalResponseMapper $mapper = new FalResponseMapper,
         protected int $timeoutSeconds = 120,
         protected int $connectTimeoutSeconds = 15,
+        protected int $requestAttempts = 2,
     ) {}
 
     protected function guard(): DownloadUrlGuard
@@ -85,6 +89,7 @@ class FalClient
             queueUrl: rtrim((string) config('studio.fal.queue_url', 'https://queue.fal.run'), '/'),
             timeoutSeconds: (int) config('studio.fal.timeout_seconds', 120),
             connectTimeoutSeconds: (int) config('studio.fal.connect_timeout_seconds', 15),
+            requestAttempts: (int) config('studio.fal.request_attempts', 2),
         );
     }
 
@@ -245,7 +250,7 @@ class FalClient
 
                 // The same policy as request(): this used to resend every
                 // non-2xx, so one 401 cost three downloads.
-                ->retry(2, 500, $this->retryWhen(), throw: false)
+                ->retry($this->requestAttempts, self::RETRY_SLEEP_MS, $this->retryWhen(), throw: false)
                 ->get($url);
         } catch (ConnectionException $e) {
             $this->discardPartial($destination);
@@ -415,7 +420,7 @@ class FalClient
 
             // throw: false because classification below is richer than an
             // exception on any non-2xx: a 402 and a 429 need opposite handling.
-            ->retry(2, 500, $this->retryWhen(), throw: false);
+            ->retry($this->requestAttempts, self::RETRY_SLEEP_MS, $this->retryWhen(), throw: false);
     }
 
     /**

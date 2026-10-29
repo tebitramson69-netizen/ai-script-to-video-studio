@@ -7,6 +7,7 @@ use App\Contracts\VideoGenerator;
 use App\Models\ProviderRequest;
 use App\Services\Pipeline\ProgressSnapshot;
 use App\Services\Provider\GenerationCompleter;
+use App\Services\Provider\SubmitWindow;
 use Illuminate\Support\Facades\Cache;
 
 /**
@@ -83,14 +84,14 @@ class ReconcileProviderRequestsJob extends StudioJob
      * never leaves "rendering". Observed live on 2026-10-05: a submit POST timed
      * out at 120s and left exactly this row.
      *
-     * The age test is the safety. Inside the submit timeout another worker may
-     * be in the middle of submitClip() right now, and releasing its claim is how
-     * one shot becomes two charges. Past that window, no earlier submit can
-     * still be running.
+     * The age test is the safety. While a submit may still be running, another
+     * worker could be inside submitClip() right now, and releasing its claim is
+     * how one shot becomes two charges. SubmitWindow::graceSeconds() is how long
+     * that is — longer than the bare timeout, because the client retries.
      */
     protected function releaseAbandonedClaims(GenerationCompleter $completer): void
     {
-        $grace = (int) config('studio.fal.timeout_seconds', 120) + 60;
+        $grace = SubmitWindow::graceSeconds();
 
         ProviderRequest::query()
             ->outstanding()

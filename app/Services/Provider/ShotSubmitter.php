@@ -27,15 +27,12 @@ class ShotSubmitter
     /**
      * How long a claim may sit unsubmitted before it is treated as abandoned.
      *
-     * Derived from the provider's own submit timeout rather than picked: once
-     * that has elapsed, no submit started earlier can still be running, so
-     * nothing is lost by releasing the claim. A shorter window would risk
-     * declaring a live submit dead and paying for the same clip twice; a longer
-     * one just leaves the shot stuck for longer than necessary.
+     * Derived rather than picked, and derived in one place — see SubmitWindow,
+     * which also records why the obvious `timeout + 60` was too short.
      */
     protected function submitGraceSeconds(): int
     {
-        return (int) config('studio.fal.timeout_seconds', 120) + 60;
+        return SubmitWindow::graceSeconds();
     }
 
     /**
