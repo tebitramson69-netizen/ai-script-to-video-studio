@@ -53,8 +53,29 @@ class Scene extends Model
         return $this->hasMany(Asset::class);
     }
 
+    /**
+     * This scene's sound effect: the newest, when more than one exists.
+     *
+     * Which one is not a detail. A scene can end up holding two effects — a
+     * regeneration records a new asset rather than overwriting the old one —
+     * and the assembler lays down the newest, because positionedEffects()
+     * keyBy()s on scene_id and the last row wins. Anything that asks "is this
+     * scene's effect still right?" has to inspect the same asset, or it
+     * answers about a sound nobody will hear.
+     *
+     * Reads the loaded relation when there is one, so a caller that eager loads
+     * `assets` pays no query per scene — which is what GenerateSoundEffectsJob
+     * and the estimator both rely on.
+     */
     public function soundEffectAsset(): ?Asset
     {
+        if ($this->relationLoaded('assets')) {
+            return $this->assets
+                ->where('type', AssetType::SoundEffect)
+                ->sortByDesc('id')
+                ->first();
+        }
+
         return $this->assets()->where('type', AssetType::SoundEffect)->latest('id')->first();
     }
 
@@ -92,12 +113,17 @@ class Scene extends Model
      * runs a little longer. What does invalidate it is the cue changing, because
      * then the sound itself is wrong.
      *
-     * Reads the loaded relation rather than querying, so a caller that eager
-     * loads `assets` pays nothing per scene.
+     * Reads through soundEffectAsset(), which uses the loaded relation when
+     * there is one — so a caller that eager loads `assets` pays nothing per
+     * scene.
      */
     public function soundEffectIsCurrent(): bool
     {
-        $effect = $this->assets->firstWhere('type', AssetType::SoundEffect);
+        // soundEffectAsset(), not firstWhere(): this used to read the OLDEST
+        // effect while the assembler lays down the newest, so a scene holding
+        // two of them was judged on a sound that would never be heard — and
+        // re-bought whenever the stale one happened not to match the cue.
+        $effect = $this->soundEffectAsset();
 
         if (! $effect instanceof Asset || ! $effect->exists()) {
             return false;

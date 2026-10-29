@@ -2,6 +2,7 @@
 
 namespace App\Services\Provider;
 
+use App\Contracts\Data\GeneratedMedia;
 use App\Contracts\ProviderException;
 use App\Contracts\QueueableVideoGenerator;
 use App\Enums\AssetType;
@@ -103,10 +104,17 @@ class GenerationCompleter
 
         $project = $request->project;
 
+        // Written to the row before anything is recorded, so that
+        // ProviderRequest::effectiveCostUsd() - the one definition of what a
+        // generation cost - is the single source for the asset, the usage
+        // record and the ledger alike. Not saved yet: markCompleted() below
+        // persists it in the same write as the rest of the outcome.
+        $request->actual_cost_usd = $this->reportedCostUsd($media);
+
         $asset = $this->recorder->record(
             project: $project,
             type: AssetType::ShotClip,
-            media: $media,
+            media: $media->withCostUsd($request->effectiveCostUsd()),
             operation: 'video.clip',
             provider: $video->providerName(),
         );
@@ -114,11 +122,7 @@ class GenerationCompleter
         $this->ledger->markCompleted(
             $request,
             assetId: $asset->getKey(),
-
-            // Prefer whatever the provider actually charged; fall back to our
-            // estimate so project spend stays approximately right until the
-            // real figure arrives.
-            actualCostUsd: $media->meta['actual_cost_usd'] ?? null,
+            actualCostUsd: $request->actual_cost_usd,
             outputUrl: $media->meta['output_url'] ?? null,
             response: $media->meta,
         );
@@ -126,6 +130,31 @@ class GenerationCompleter
         $this->attachToShot($request, $asset->getKey(), (float) $asset->cost_usd);
 
         return true;
+    }
+
+    /**
+     * What the provider says it charged, or null if it said nothing.
+     *
+     * Kept separate from the fallback on purpose. provider_requests.actual_cost_usd
+     * means "what we were told", and costVarianceUsd() compares it against the
+     * estimate to show whether the rates in config/studio.php are drifting — so
+     * writing an estimate into it would destroy the only signal that the rates
+     * are wrong.
+     *
+     * A reported zero is treated as nothing reported. fal sends no cost field
+     * for Kling at all, and a parsed 0.00 is far more likely to be a mapping
+     * artefact than a genuinely free generation; under the over-estimate rule
+     * the estimate is the safer number for the cap either way.
+     */
+    protected function reportedCostUsd(GeneratedMedia $media): ?float
+    {
+        $reported = $media->meta['actual_cost_usd'] ?? null;
+
+        if (! is_numeric($reported) || (float) $reported <= 0.0) {
+            return null;
+        }
+
+        return (float) $reported;
     }
 
     /**

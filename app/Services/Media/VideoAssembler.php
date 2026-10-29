@@ -345,9 +345,15 @@ class VideoAssembler
      */
     protected function positionedEffects(Project $project, $shots): array
     {
+        // Ordered explicitly because keyBy() keeps the LAST row for a scene, and
+        // a scene can hold two effects after a regeneration. Without the order
+        // the winner was whatever the database happened to return, while
+        // Scene::soundEffectAsset() promises the newest. Same asset, stated
+        // rather than assumed.
         $byScene = $project->assets()
             ->where('type', AssetType::SoundEffect)
             ->whereNotNull('scene_id')
+            ->orderBy('id')
             ->get()
             ->keyBy('scene_id');
 

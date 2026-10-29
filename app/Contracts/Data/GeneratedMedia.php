@@ -25,4 +25,25 @@ readonly class GeneratedMedia
         public ?float $durationSeconds = null,
         public array $meta = [],
     ) {}
+
+    /**
+     * The same media priced differently.
+     *
+     * A driver prices what it generated from whatever it has to hand, which is
+     * not always the best evidence available: the charge the provider reports,
+     * or the estimate the ledger persisted when the work was claimed, both
+     * arrive outside the driver. This lets the pipeline correct the figure
+     * without a driver ever reaching into the database.
+     */
+    public function withCostUsd(float $costUsd): self
+    {
+        return new self(
+            path: $this->path,
+            mime: $this->mime,
+            model: $this->model,
+            costUsd: $costUsd,
+            durationSeconds: $this->durationSeconds,
+            meta: $this->meta,
+        );
+    }
 }
