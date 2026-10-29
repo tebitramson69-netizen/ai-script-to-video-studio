@@ -82,14 +82,15 @@ class DoctorCommandTest extends TestCase
         $this->app->forgetInstance(FalClient::class);
     }
 
-    protected function failedJob(): void
+    protected function failedJob(?string $exception = null): void
     {
         DB::table('failed_jobs')->insert([
             'uuid' => (string) Str::uuid(),
             'connection' => 'database',
             'queue' => 'default',
             'payload' => '{}',
-            'exception' => 'PDOException: SQLSTATE[HY000]: General error: 5 database is locked',
+            'exception' => $exception
+                ?? 'PDOException: SQLSTATE[HY000]: General error: 5 database is locked',
             'failed_at' => now(),
         ]);
     }
@@ -238,6 +239,40 @@ class DoctorCommandTest extends TestCase
         $this->reconfigure(['studio.fal.key' => '', 'studio.video_generator' => 'fal']);
 
         $this->run_doctor(1);
+    }
+
+    /**
+     * The exception line must name the file, not the machine it ran on.
+     *
+     * The real report from the owner's Windows machine truncated inside
+     * "...\vendor\laravel\framework\src\Illuminate\Data" — the absolute
+     * project path had consumed the whole budget before reaching a file name.
+     * A first attempt at stripping it used a character class written '[\\/]'
+     * in a single-quoted PHP string, which the engine sees as [\/]: an escaped
+     * forward slash that can never match a backslash. It read correctly and did
+     * nothing, which is why this test feeds the verbatim line rather than a
+     * tidy one.
+     */
+    public function test_the_exception_line_names_the_file_not_the_machine(): void
+    {
+        $this->sweptAt(5);
+
+        $root = base_path();
+
+        $this->failedJob(
+            'PDOException: SQLSTATE[HY000]: General error: 5 database is locked in '.
+            $root.'\\vendor\\laravel\\framework\\src\\Illuminate\\Database\\Connection.php:626'.
+            PHP_EOL.'Stack trace:'.PHP_EOL.'#0 '.$root.'\\artisan(13)',
+        );
+
+        $output = $this->run_doctor(1);
+
+        $this->assertStringContainsString('Connection.php:626', $output);
+        $this->assertStringNotContainsString($root, $output);
+
+        // And still only the first line: a stack trace would bury every check
+        // printed after it.
+        $this->assertStringNotContainsString('Stack trace', $output);
     }
 
     /**

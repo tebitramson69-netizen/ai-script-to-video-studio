@@ -172,12 +172,19 @@ class DoctorCommand extends Command
     {
         $line = trim(strtok($exception, "\r\n") ?: $exception);
 
-        // An absolute vendor path ate the budget and hid the very thing the
-        // line is for - the first report truncated at
-        // "...\vendor\laravel\framework\src\Illuminate\Data" and never reached
-        // the file name, let alone the line number.
-        $line = preg_replace('#[A-Za-z]:[\\/].*?[\\/]vendor[\\/]#', 'vendor/', $line) ?? $line;
-        $line = preg_replace('#'.preg_quote(base_path(), '#').'[\\/]#', '', $line) ?? $line;
+        // The absolute project path ate the budget and hid the very thing this
+        // line exists for: the first report truncated inside
+        // "...\vendor\laravel\framework\src\Illuminate\Data" and never reached a
+        // file name, let alone a line number.
+        //
+        // str_replace rather than a pattern, deliberately. The first attempt
+        // used a character class written '[\\/]' in a single-quoted PHP
+        // string, which reaches the engine as [\/] - an ESCAPED forward slash,
+        // matching / and never a backslash. On Windows it could not match at
+        // all, and it looked right in review.
+        foreach ([base_path(), str_replace('\\', '/', base_path())] as $root) {
+            $line = str_replace([$root.'\\', $root.'/'], '', $line);
+        }
 
         return mb_strlen($line) > self::MESSAGE_WIDTH
             ? mb_substr($line, 0, self::MESSAGE_WIDTH - 3).'...'
