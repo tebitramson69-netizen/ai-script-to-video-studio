@@ -3,10 +3,12 @@
 namespace App\Http\Controllers;
 
 use App\Exceptions\BudgetExceededException;
+use App\Exceptions\WouldDestroyPaidWorkException;
 use App\Models\Project;
 use App\Services\Pipeline\PipelineRunner;
 use App\Services\Retention\RetentionManager;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 
 /**
  * The owner's "run this stage" buttons.
@@ -19,13 +21,17 @@ class PipelineController extends Controller
 {
     public function __construct(protected PipelineRunner $runner) {}
 
-    public function parseScript(Project $project): RedirectResponse
+    public function parseScript(Request $request, Project $project): RedirectResponse
     {
         $this->authorize('generate', $project);
 
-        $this->runner->parseScript($project);
+        return $this->guarded(
+            function () use ($request, $project) {
+                $this->runner->parseScript($project, force: $request->boolean('force'));
 
-        return back()->with('status', 'Re-parsing the script.');
+                return 'Re-parsing the script.';
+            },
+        );
     }
 
     public function generateCharacters(Project $project): RedirectResponse
@@ -137,7 +143,10 @@ class PipelineController extends Controller
     {
         try {
             $result = $action();
-        } catch (BudgetExceededException $e) {
+        } catch (BudgetExceededException|WouldDestroyPaidWorkException $e) {
+            // One banner for "refused, and here is why". Both refusals are the
+            // same thing to the owner: the action did not happen, and the
+            // message says what it would have cost.
             return back()->with('budget_error', $e->getMessage());
         }
 

@@ -3,8 +3,11 @@
 namespace App\Models;
 
 use App\Enums\AssetType;
+use App\Enums\ShotStatus;
 use Illuminate\Database\Eloquent\Attributes\Scope;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -122,6 +125,21 @@ class Scene extends Model
         // constraint only nulls the column, and a null column with a file still
         // on disk is a leak NFR-7's purge would never find.
         static::deleting(fn (self $scene) => $scene->assets()->get()->each->delete());
+    }
+
+    /**
+     * Shots whose clip has been bought, or is being bought right now.
+     *
+     * Read before anything deletes this scene, because the row is the only
+     * link to the clip (ShotStatus::carryingPaidWork()).
+     *
+     * @return Collection<int, Shot>
+     */
+    public function paidShots(): EloquentCollection
+    {
+        return $this->shots()
+            ->whereIn('status', ShotStatus::carryingPaidWorkValues())
+            ->get();
     }
 
     public function wordCount(): int

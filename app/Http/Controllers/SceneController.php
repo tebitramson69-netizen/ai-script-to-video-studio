@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Exceptions\WouldDestroyPaidWorkException;
 use App\Http\Requests\UpdateSceneRequest;
 use App\Models\Project;
 use App\Models\Scene;
@@ -33,10 +34,24 @@ class SceneController extends Controller
         return back()->with('status', "Scene {$scene->sequence} updated. Downstream shots are now stale.");
     }
 
-    public function destroy(Project $project, Scene $scene): RedirectResponse
+    public function destroy(Request $request, Project $project, Scene $scene): RedirectResponse
     {
         $this->authorize('update', $project);
         $this->assertBelongs($project, $scene);
+
+        // shots.scene_id is cascadeOnDelete(), so this takes the scene's shots
+        // with it at the database level - rendered clips included, with no
+        // Eloquent event to clean up after them.
+        if (! $request->boolean('force')) {
+            $paid = $scene->paidShots();
+
+            if ($paid->isNotEmpty()) {
+                return back()->with(
+                    'budget_error',
+                    (new WouldDestroyPaidWorkException($paid, "Deleting scene {$scene->sequence}"))->getMessage(),
+                );
+            }
+        }
 
         DB::transaction(function () use ($project, $scene) {
             $scene->delete();

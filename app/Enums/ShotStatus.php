@@ -63,6 +63,33 @@ enum ShotStatus: string
     }
 
     /**
+     * Statuses whose clip has been bought, or is being bought right now.
+     *
+     * Deleting a shot in one of these destroys the only link to a paid clip:
+     * shots.asset_id goes with the row, the file stays on disk with nothing
+     * pointing at it, and usage_records survive — so the cap still remembers
+     * the money while the video has to be rendered again at full price.
+     *
+     * Queued is deliberately absent. It has been dispatched but not submitted,
+     * so no provider has been asked for anything yet, and RenderShotJob simply
+     * finds no shot and returns.
+     *
+     * @return list<self>
+     */
+    public static function carryingPaidWork(): array
+    {
+        return [self::Rendering, self::Rendered];
+    }
+
+    /**
+     * @return list<string>
+     */
+    public static function carryingPaidWorkValues(): array
+    {
+        return array_map(fn (self $s) => $s->value, self::carryingPaidWork());
+    }
+
+    /**
      * @return list<string>
      */
     public static function needingRenderValues(): array

@@ -172,8 +172,18 @@ php artisan schedule:work</code></pre>
     <section class="card">
         <div class="head-row">
             <h2>Scenes</h2>
-            <form method="POST" action="{{ route('pipeline.parse', $project) }}">
+            @php $paidShots = $project->paidShots(); @endphp
+            {{-- The server refuses an unforced re-parse once clips are paid for
+                 (PipelineRunner::parseScript). This only makes the confirmation
+                 informed: it names what would be thrown away. --}}
+            <form method="POST" action="{{ route('pipeline.parse', $project) }}"
+                  @if ($paidShots->isNotEmpty())
+                      onsubmit="return confirm('This deletes {{ $paidShots->count() }} shot(s) you have already paid ${{ number_format((float) $paidShots->sum('cost_usd'), 2) }} for. The clips stay on disk but the project forgets them, and the spend stays on the ledger — so the video has to be rendered again at full price. Continue?')"
+                  @endif>
                 @csrf
+                @if ($paidShots->isNotEmpty())
+                    <input type="hidden" name="force" value="1">
+                @endif
                 <button class="btn" type="submit">Re-parse script</button>
             </form>
         </div>
@@ -219,9 +229,15 @@ php artisan schedule:work</code></pre>
                             @csrf <input type="hidden" name="direction" value="down">
                             <button class="btn small" type="submit">&darr; Down</button>
                         </form>
+                        @php $scenePaid = $scene->paidShots(); @endphp
                         <form method="POST" action="{{ route('scenes.destroy', [$project, $scene]) }}" class="inline"
-                              onsubmit="return confirm('Delete this scene?')">
+                              onsubmit="return confirm('{{ $scenePaid->isEmpty()
+                                  ? 'Delete this scene?'
+                                  : 'This scene has '.$scenePaid->count().' paid shot(s) ($'.number_format((float) $scenePaid->sum('cost_usd'), 2).'). Deleting it discards those clips and the video has to be rendered again. Continue?' }}')">
                             @csrf @method('DELETE')
+                            @if ($scenePaid->isNotEmpty())
+                                <input type="hidden" name="force" value="1">
+                            @endif
                             <button class="btn small danger" type="submit">Delete</button>
                         </form>
                     </div>

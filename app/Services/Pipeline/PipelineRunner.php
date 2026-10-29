@@ -5,6 +5,7 @@ namespace App\Services\Pipeline;
 use App\Enums\ShotStatus;
 use App\Exceptions\BudgetExceededException;
 use App\Exceptions\ShotInFlightException;
+use App\Exceptions\WouldDestroyPaidWorkException;
 use App\Jobs\AssembleProjectJob;
 use App\Jobs\FinalizeAudioJob;
 use App\Jobs\GenerateCharacterCandidatesJob;
@@ -35,8 +36,25 @@ class PipelineRunner
         protected ProjectStateMachine $stateMachine,
     ) {}
 
-    public function parseScript(Project $project): void
+    /**
+     * Re-derive scenes and cast from the script (FR-1).
+     *
+     * @throws WouldDestroyPaidWorkException unless $force
+     */
+    public function parseScript(Project $project, bool $force = false): void
     {
+        // StructureScriptJob deletes every scene, and shots.scene_id is
+        // cascadeOnDelete() - so a re-parse after a render silently takes the
+        // paid clips' only link with it. Refused here rather than in the
+        // controller, so an API caller or a future button cannot miss it.
+        if (! $force) {
+            $paid = $project->paidShots();
+
+            if ($paid->isNotEmpty()) {
+                throw new WouldDestroyPaidWorkException($paid, 'Re-parsing the script');
+            }
+        }
+
         StructureScriptJob::dispatch($project->getKey());
     }
 

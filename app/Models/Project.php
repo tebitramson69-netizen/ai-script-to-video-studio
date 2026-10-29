@@ -6,6 +6,8 @@ use App\Enums\AspectRatio;
 use App\Enums\AssetType;
 use App\Enums\ProjectStatus;
 use App\Enums\ShotStatus;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -125,6 +127,21 @@ class Project extends Model
     public function hasStaleShots(): bool
     {
         return $this->shots()->where('status', ShotStatus::Stale)->exists();
+    }
+
+    /**
+     * Shots whose clip has been bought, or is being bought right now.
+     *
+     * Read before anything deletes these scenes, because the row is the only
+     * link to the clip (ShotStatus::carryingPaidWork()).
+     *
+     * @return Collection<int, Shot>
+     */
+    public function paidShots(): EloquentCollection
+    {
+        return $this->shots()
+            ->whereIn('status', ShotStatus::carryingPaidWorkValues())
+            ->get();
     }
 
     public function unrenderedShotCount(): int
