@@ -29,6 +29,14 @@ use Throwable;
  */
 class DoctorCommand extends Command
 {
+    /**
+     * How many failures to explain before summarising the rest.
+     *
+     * Enough to see a pattern, few enough that one bad night buries the checks
+     * below it. The COUNT is always exact; only the detail is capped.
+     */
+    protected const FAILURES_SHOWN = 5;
+
     protected $signature = 'studio:doctor';
 
     protected $description = 'Check drivers, credential, scheduler heartbeat and queue depth before spending anything';
@@ -150,6 +158,20 @@ class DoctorCommand extends Command
     }
 
     /**
+     * The exception's first line, which is its class and message.
+     *
+     * The rest is a stack trace. Printing it would bury every check below this
+     * one, and the first line is what actually classifies a failure - a
+     * `database is locked` and a 422 from a provider need opposite responses.
+     */
+    protected function firstLineOf(string $exception): string
+    {
+        $line = trim(strtok($exception, "\r\n") ?: $exception);
+
+        return mb_strlen($line) > 160 ? mb_substr($line, 0, 157).'...' : $line;
+    }
+
+    /**
      * The check that protects money.
      *
      * A submitted generation is billed whether or not anything collects it, and
@@ -179,6 +201,17 @@ class DoctorCommand extends Command
             // is the exact misdiagnosis this command exists to end.
             $queued = (int) DB::table('jobs')->whereNull('reserved_at')->count();
             $failed = (int) DB::table('failed_jobs')->count();
+
+            // The exception, not just the count. `queue:failed` lists uuids and
+            // job names and cannot show why anything broke, so this command used
+            // to raise a question and then point at a command that could not
+            // answer it - and reading the answer took a hand-written tinker
+            // one-liner twice, which is the same test that justified building
+            // this command in the first place.
+            $failures = DB::table('failed_jobs')
+                ->orderByDesc('id')
+                ->limit(self::FAILURES_SHOWN)
+                ->get(['uuid', 'failed_at', 'exception']);
         } catch (Throwable $e) {
             $this->line('  <fg=red>the database could not be read</>');
             $this->line('  '.$e->getMessage());
@@ -206,6 +239,16 @@ class DoctorCommand extends Command
         $this->line("  waiting jobs   {$queued}");
         $this->line('  failed jobs    '.($failed > 0 ? "<fg=yellow>{$failed}</>" : '0'));
 
+        foreach ($failures as $failure) {
+            // Full uuid, because that is what queue:retry and queue:forget take.
+            $this->line("    <fg=yellow>{$failure->failed_at}</>  {$failure->uuid}");
+            $this->line('      '.$this->firstLineOf((string) $failure->exception));
+        }
+
+        if ($failed > self::FAILURES_SHOWN) {
+            $this->line('    ... and '.($failed - self::FAILURES_SHOWN).' more');
+        }
+
         // Reported whatever the heartbeat says. A failed job is a thing that
         // did not happen - a collection sweep that never collected, a stage
         // that was paid for and lost - and it stays failed while the sweep runs
@@ -214,7 +257,10 @@ class DoctorCommand extends Command
         // spend". The owner's own failed job was only ever found because their
         // heartbeat happened to be stale at the time.
         if ($failed > 0) {
-            $problems[] = "{$failed} job(s) have failed. Inspect them with `php artisan queue:failed`.";
+            // The cause is on screen now, so the advice is what to DO about it.
+            $problems[] = "{$failed} job(s) have failed - the cause is printed above each one. ".
+                'Re-run one with `php artisan queue:retry <uuid>`, or discard it with '.
+                '`php artisan queue:forget <uuid>` once you know why it failed.';
         }
 
         if ($healthy) {

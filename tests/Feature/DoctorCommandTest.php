@@ -146,8 +146,52 @@ class DoctorCommandTest extends TestCase
 
         $output = $this->run_doctor(1);
 
-        $this->assertStringContainsString('queue:failed', $output);
+        // The finding, not the wording of the remedy: this test exists to prove
+        // the check is reached at all, and naming the suggested command made it
+        // fail when that advice was improved.
+        $this->assertStringContainsString('1 job(s) have failed', $output);
         $this->assertStringNotContainsString('All checks passed', $output);
+    }
+
+    /**
+     * The command used to raise a question and point at a command that could
+     * not answer it: `queue:failed` lists uuids and job names and never shows
+     * why anything broke. Reading the exception took a hand-written tinker
+     * one-liner twice — and the second time Windows PowerShell mangled the
+     * quoting, which is a round trip spent on the shell rather than the bug.
+     */
+    public function test_a_failed_job_explains_itself(): void
+    {
+        $this->sweptAt(5);
+        $this->failedJob();
+
+        $output = $this->run_doctor(1);
+
+        // The class and message, which is what tells a lock apart from a 422.
+        $this->assertStringContainsString('database is locked', $output);
+
+        // And what to do about it. queue:failed cannot explain anything, so
+        // sending the owner there was the original mistake.
+        $this->assertStringContainsString('queue:forget', $output);
+        $this->assertStringNotContainsString('Inspect them with', $output);
+    }
+
+    /**
+     * One bad night must not bury the checks below it, so the detail is capped
+     * while the count stays exact.
+     */
+    public function test_many_failures_are_summarised_rather_than_dumped(): void
+    {
+        $this->sweptAt(5);
+
+        for ($i = 0; $i < 7; $i++) {
+            $this->failedJob();
+        }
+
+        $output = $this->run_doctor(1);
+
+        $this->assertStringContainsString('7 job(s) have failed', $output);
+        $this->assertStringContainsString('and 2 more', $output);
     }
 
     /**
