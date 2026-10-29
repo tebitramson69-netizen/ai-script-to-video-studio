@@ -8,6 +8,7 @@ use App\Contracts\SoundEffectGenerator;
 use App\Contracts\SpeechSynthesizer;
 use App\Contracts\VideoGenerator;
 use App\Integrations\Fal\FalClient;
+use App\Models\ProviderRequest;
 use App\Services\Pipeline\ProgressSnapshot;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
@@ -36,6 +37,9 @@ class DoctorCommand extends Command
      * below it. The COUNT is always exact; only the detail is capped.
      */
     protected const FAILURES_SHOWN = 5;
+
+    /** Wide enough for a message plus the file and line it names. */
+    protected const MESSAGE_WIDTH = 200;
 
     protected $signature = 'studio:doctor';
 
@@ -168,7 +172,16 @@ class DoctorCommand extends Command
     {
         $line = trim(strtok($exception, "\r\n") ?: $exception);
 
-        return mb_strlen($line) > 160 ? mb_substr($line, 0, 157).'...' : $line;
+        // An absolute vendor path ate the budget and hid the very thing the
+        // line is for - the first report truncated at
+        // "...\vendor\laravel\framework\src\Illuminate\Data" and never reached
+        // the file name, let alone the line number.
+        $line = preg_replace('#[A-Za-z]:[\\/].*?[\\/]vendor[\\/]#', 'vendor/', $line) ?? $line;
+        $line = preg_replace('#'.preg_quote(base_path(), '#').'[\\/]#', '', $line) ?? $line;
+
+        return mb_strlen($line) > self::MESSAGE_WIDTH
+            ? mb_substr($line, 0, self::MESSAGE_WIDTH - 3).'...'
+            : $line;
     }
 
     /**
@@ -212,6 +225,14 @@ class DoctorCommand extends Command
                 ->orderByDesc('id')
                 ->limit(self::FAILURES_SHOWN)
                 ->get(['uuid', 'failed_at', 'exception']);
+
+            // The number that says whether money is sitting uncollected, and
+            // the one this command was missing. fal bills a submit whether or
+            // not anything fetches the result, so an outstanding request beside
+            // a stale sweep is not a warning - it is a generation already paid
+            // for that nobody is collecting. The on-page banner has always used
+            // this; the command the owner runs BEFORE spending did not.
+            $outstanding = (int) ProviderRequest::query()->outstanding()->count();
         } catch (Throwable $e) {
             $this->line('  <fg=red>the database could not be read</>');
             $this->line('  '.$e->getMessage());
@@ -237,6 +258,8 @@ class DoctorCommand extends Command
         });
 
         $this->line("  waiting jobs   {$queued}");
+        $this->line('  outstanding    '.($outstanding > 0 ? "<fg=yellow>{$outstanding}</>" : '0').
+            ' generation(s) submitted and not yet collected');
         $this->line('  failed jobs    '.($failed > 0 ? "<fg=yellow>{$failed}</>" : '0'));
 
         foreach ($failures as $failure) {
@@ -265,6 +288,14 @@ class DoctorCommand extends Command
 
         if ($healthy) {
             return $problems;
+        }
+
+        // Reported before the which-half-is-down advice, because this is the
+        // one combination that is actively costing money rather than merely
+        // being broken.
+        if ($outstanding > 0) {
+            $problems[] = "{$outstanding} generation(s) are submitted and uncollected while the sweep is not running. ".
+                'fal has already been paid for these; nothing will fetch them until collection resumes.';
         }
 
         // A backlog means the scheduler is producing and nothing is consuming;

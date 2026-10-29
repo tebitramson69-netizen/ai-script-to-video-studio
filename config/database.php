@@ -104,7 +104,23 @@ return [
             'journal_mode' => env('DB_JOURNAL_MODE', 'WAL'),
 
             'synchronous' => null,
-            'transaction_mode' => 'DEFERRED',
+
+            // IMMEDIATE takes the write lock up front, so a transaction that
+            // reads and then writes never has to UPGRADE - which is the failure
+            // WAL does not fix. An upgrade that loses its snapshot returns
+            // SQLITE_BUSY_SNAPSHOT and bypasses the busy handler, so no timeout
+            // helps; three sweeps died that way on the owner's machine, two of
+            // them after WAL was on.
+            //
+            // Belt and braces, NOT the fix. SQLiteConnection only honours this
+            // on PHP >= 8.4.0 (version_compare guard in
+            // executeBeginTransactionStatement) and falls back to a plain
+            // beginTransaction() otherwise. The owner runs 8.4.25, so it applies
+            // there; this repo pins 8.3.0, so it is silently ignored in CI. A
+            // setting that works in development and not in tests cannot be load
+            // bearing - that is what ResilientWrite is for, and it works on
+            // every version.
+            'transaction_mode' => 'IMMEDIATE',
         ],
 
         'mysql' => [

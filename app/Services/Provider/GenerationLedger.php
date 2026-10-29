@@ -6,6 +6,7 @@ use App\Enums\ProviderFailureReason;
 use App\Enums\ProviderRequestStatus;
 use App\Models\Project;
 use App\Models\ProviderRequest;
+use App\Services\Database\ResilientWrite;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Str;
 
@@ -122,7 +123,11 @@ class GenerationLedger
         ?string $outputUrl = null,
         ?array $response = null,
     ): ProviderRequest {
-        $request->forceFill([
+        // Retried on a lost race. This is the write that records a generation
+        // as collected and paid for, so losing it to a snapshot conflict leaves
+        // the request outstanding and the clip uncollected. Idempotent, so a
+        // second attempt is safe.
+        ResilientWrite::run(fn () => $request->forceFill([
             'status' => ProviderRequestStatus::Completed,
             'asset_id' => $assetId,
             'actual_cost_usd' => $actualCostUsd,
@@ -131,7 +136,7 @@ class GenerationLedger
             'failure_reason' => null,
             'error_message' => null,
             'completed_at' => now(),
-        ])->save();
+        ])->save());
 
         return $request;
     }

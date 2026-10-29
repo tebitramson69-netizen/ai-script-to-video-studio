@@ -12,6 +12,7 @@ use App\Enums\ProviderRequestStatus;
 use App\Enums\ShotStatus;
 use App\Models\ProviderRequest;
 use App\Models\Shot;
+use App\Services\Database\ResilientWrite;
 use App\Services\Pipeline\AssetRecorder;
 use App\Services\Pipeline\ProjectStateMachine;
 use Throwable;
@@ -169,13 +170,17 @@ class GenerationCompleter
             return;
         }
 
-        $shot->forceFill([
+        // Retried on a lost race: this is what makes the clip visible to the
+        // owner and to the assembler. The asset and the usage record are
+        // already written by now, so losing this leaves a project that has paid
+        // for a shot it still shows as rendering.
+        ResilientWrite::run(fn () => $shot->forceFill([
             'asset_id' => $assetId,
             'status' => ShotStatus::Rendered,
             'cost_usd' => $costUsd,
             'error' => null,
             'rendered_at' => now(),
-        ])->save();
+        ])->save());
 
         $project = $shot->project->fresh();
 

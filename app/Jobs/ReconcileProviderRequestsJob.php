@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Contracts\QueueableVideoGenerator;
 use App\Contracts\VideoGenerator;
 use App\Models\ProviderRequest;
+use App\Services\Database\ResilientWrite;
 use App\Services\Pipeline\ProgressSnapshot;
 use App\Services\Provider\GenerationCompleter;
 use App\Services\Provider\SubmitWindow;
@@ -40,13 +41,21 @@ class ReconcileProviderRequestsJob extends StudioJob
         // in flight forever and says nothing. That is the failure mode of
         // running `queue:work` without `schedule:work`, which costs real money,
         // because fal has already been paid for a generation nothing collects.
-        Cache::put(
+        // Best-effort, because this is the sweep describing itself and the
+        // description must never kill the work. CACHE_STORE is `database`, so
+        // this is a write to the same SQLite file the queue worker is writing
+        // job rows to - and $tries is 1 here, deliberately, since the next
+        // sweep is the retry. Together those meant one lost race turned into a
+        // permanent failed_jobs row AND a sweep that collected nothing, for a
+        // progress note. Three such rows accumulated on the owner's machine,
+        // two of them with WAL already on.
+        ResilientWrite::bestEffort(fn () => Cache::put(
             ProgressSnapshot::RECONCILER_HEARTBEAT_KEY,
             now()->timestamp,
 
             // Long enough that expiry never masquerades as a stalled scheduler.
             now()->addDay(),
-        );
+        ));
 
         // Released before the driver check, and deliberately not limited to
         // video: any adapter that claims and then fails to record an id strands

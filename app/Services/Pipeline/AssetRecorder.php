@@ -7,7 +7,7 @@ use App\Enums\AssetType;
 use App\Models\Asset;
 use App\Models\Project;
 use App\Models\Scene;
-use Illuminate\Support\Facades\DB;
+use App\Services\Database\ResilientWrite;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
@@ -60,7 +60,11 @@ class AssetRecorder
         // just clutter in the system temp directory.
         @unlink($media->path);
 
-        return DB::transaction(function () use (
+        // Retried on a lost race rather than abandoning a generation that has
+        // already been paid for. Everything non-database - the stream copy and
+        // the temp unlink above - is deliberately outside, because a retry
+        // re-runs the whole closure.
+        return ResilientWrite::run(function () use (
             $project, $type, $media, $operation, $provider, $durationMs, $disk, $path, $bytes, $scene
         ) {
             $asset = $project->assets()->create([

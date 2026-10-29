@@ -2,8 +2,10 @@
 
 namespace Tests\Feature;
 
+use App\Enums\ProviderRequestStatus;
 use App\Integrations\Fal\FalClient;
 use App\Models\Project;
+use App\Models\ProviderRequest;
 use App\Models\User;
 use App\Services\Pipeline\ProgressSnapshot;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -236,6 +238,57 @@ class DoctorCommandTest extends TestCase
         $this->reconfigure(['studio.fal.key' => '', 'studio.video_generator' => 'fal']);
 
         $this->run_doctor(1);
+    }
+
+    /**
+     * The number that says whether money is sitting uncollected, and the one
+     * this command was missing entirely. fal bills a submit whether or not
+     * anything fetches the result, so an outstanding request beside a stale
+     * sweep is a generation already paid for that nobody is collecting. The
+     * on-page banner has always used it; the command run BEFORE spending did
+     * not.
+     */
+    public function test_an_uncollected_generation_beside_a_dead_sweep_is_a_problem(): void
+    {
+        $this->sweptAt(600);
+        $this->outstandingRequest();
+
+        $output = $this->run_doctor(1);
+
+        $this->assertStringContainsString('outstanding    1', $output);
+        $this->assertStringContainsString('fal has already been paid', $output);
+    }
+
+    /**
+     * The counterweight: a generation in flight while collection is running is
+     * the normal state of a render, not a fault. Reporting it as one would
+     * train the owner to ignore the line that matters.
+     */
+    public function test_an_uncollected_generation_is_fine_while_the_sweep_is_alive(): void
+    {
+        $this->sweptAt(5);
+        $this->outstandingRequest();
+
+        $output = $this->run_doctor(0);
+
+        $this->assertStringContainsString('outstanding    1', $output);
+        $this->assertStringContainsString('All checks passed', $output);
+    }
+
+    protected function outstandingRequest(): void
+    {
+        $project = Project::factory()->for(User::factory())->budget(10.00)->create();
+
+        ProviderRequest::create([
+            'project_id' => $project->getKey(),
+            'capability' => 'video.clip',
+            'provider' => 'fal',
+            'model' => 'kling-2-5-turbo-pro',
+            'fingerprint' => 'doctor-outstanding',
+            'status' => ProviderRequestStatus::InProgress,
+            'provider_request_id' => 'req-doctor',
+            'estimated_cost_usd' => 0.35,
+        ]);
     }
 
     /**
